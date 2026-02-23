@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>食材效期管理系統 - 多店同步版</title>
+    <script src="https://www.gstatic.com/firebasejs/9.15.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore-compat.js"></script>
+
+    <style>
+        /* 保持介面樣式 - 嚴格不動 */
+        body { margin: 0; font-family: "Microsoft JhengHei", sans-serif; display: flex; height: 100vh; background-color: #f0f2f5; -webkit-user-select: none; user-select: none; overflow: hidden; }
+        #sidebar { width: 230px; background-color: #2c3e50; display: flex; flex-direction: column; padding: 20px 15px; flex-shrink: 0; }
+        .menu-btn { padding: 18px 10px; margin-bottom: 12px; font-size: 22px; cursor: pointer; background: #34495e; color: white; border: none; border-radius: 10px; text-align: center; font-weight: bold; }
+        .menu-btn.active { background: #1abc9c !important; }
+        .admin-btn { background: #7f8c8d !important; margin-top: 10px; font-size: 18px; }
+        .summary-btn { margin-top: auto; background: #27ae60 !important; }
+        #main-content { flex: 1; padding: 25px; overflow-y: auto; background-color: #f0f2f5; display: none; }
+        .category-group { margin-bottom: 35px; }
+        .category-title { font-size: 22px; font-weight: bold; color: #2c3e50; margin-bottom: 10px; display: flex; align-items: center; background: #dfe4ea; padding: 8px 15px; border-radius: 8px; }
+        .summary-header-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; width: 100%; margin-bottom: 8px; }
+        .header-labels { display: grid; grid-template-columns: 1.5fr 1.3fr 1.3fr 0.9fr; padding: 0 15px; font-size: 13px; color: #7f8c8d; font-weight: bold; }
+        .card-container { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px 20px; width: 100%; align-items: start; }
+        .food-item-card { background: #e9ecef; border-radius: 10px; padding: 8px 15px; display: grid; grid-template-columns: 1.5fr 1.3fr 1.3fr 0.9fr; align-items: center; color: #adb5bd; min-height: 45px; border: 1px solid transparent; cursor: pointer; transition: 0.15s; }
+        .active-card { background: white !important; color: #333 !important; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+        .warning-card { background: #fffdf0 !important; border-left: 8px solid #f1c40f !important; border-right: 1px solid #f1c40f; }
+        .expired-card { background: #fff8f8 !important; border-left: 8px solid #e74c3c !important; border-right: 1px solid #e74c3c; }
+        .food-name { font-weight: bold; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .time-text { font-size: 11px; font-family: 'Consolas', monospace; }
+        .mini-btn { border: none; padding: 6px 10px; border-radius: 5px; color: white; font-size: 12px; cursor: pointer; font-weight: bold; margin-left: 2px; }
+        .btn-undo { background: #e67e22; }
+        .btn-del { background: #c0392b; }
+        #modal-overlay, #detail-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); justify-content: center; align-items: center; z-index: 2000; }
+        .modal { background: white; border-radius: 25px; text-align: center; width: 450px; padding: 35px; box-shadow: 0 15px 40px rgba(0,0,0,0.2); }
+        .modal-btn { padding: 18px 0; font-size: 20px; border-radius: 15px; border: none; cursor: pointer; width: 180px; font-weight: bold; margin: 10px; }
+        .btn-only-save { background: #adb5bd; color: white; }
+        .btn-print { background: #4cd964; color: white; }
+        .btn-cancel { background: #e74c3c; color: white; border: none; width: 300px; margin: 20px auto 0; padding: 12px 0; font-size: 16px; cursor: pointer; border-radius: 12px; display: block; font-weight: bold; transition: 0.2s; }
+        .detail-line { margin: 15px 0; font-size: 18px; border-bottom: 1px solid #eee; padding-bottom: 10px; text-align: left; }
+        .detail-label { font-weight: bold; color: #7f8c8d; width: 100px; display: inline-block; }
+        .status-badge { padding: 5px 15px; border-radius: 50px; color: white; font-weight: bold; }
+        .admin-section { background: white; padding: 20px; border-radius: 15px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); margin-bottom: 25px; }
+        .admin-table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+        .admin-table th, .admin-table td { padding: 12px; border-bottom: 1px solid #eee; text-align: left; }
+        .input-box { padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; }
+        .btn-add { background: #1abc9c; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        .item-btn { width: 155px; height: 85px; margin: 8px; font-size: 19px; border-radius: 12px; border: 1px solid #ddd; background: #fff; cursor: pointer; font-weight: bold; color: #333; overflow: hidden; }
+        #login-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #2c3e50; display: flex; justify-content: center; align-items: center; z-index: 9999; }
+        #toast { visibility: hidden; background: #333; color: #fff; padding: 15px 35px; position: fixed; left: 50%; bottom: 30px; transform: translateX(-50%); border-radius: 50px; z-index: 3000; font-weight: bold; }
+        #toast.show { visibility: visible; animation: fadein 0.5s, fadeout 0.5s 2s; }
+    </style>
+</head>
+<body>
+
+    <div id="toast">✅ 操作成功</div>
+
+    <div id="login-overlay">
+        <div style="background: white; padding: 40px; border-radius: 20px; text-align: center; width: 340px;">
+            <h2 style="margin-bottom:25px;">食材效期管理系統</h2>
+            <input type="text" id="store-user" style="width:100%; padding:15px; margin-bottom:10px; box-sizing:border-box;" placeholder="帳號">
+            <input type="password" id="store-pw" style="width:100%; padding:15px; margin-bottom:25px; box-sizing:border-box;" placeholder="密碼">
+            <button style="width:100%; padding:15px; background:#1abc9c; color:white; border:none; border-radius:10px; font-size:20px; font-weight:bold; cursor:pointer;" onclick="checkLogin()">登入系統</button>
+        </div>
+    </div>
+
+    <div id="detail-overlay" onclick="closeDetail()">
+        <div class="modal" onclick="event.stopPropagation()">
+            <h2 id="det-title" style="margin-top:0; color:#2c3e50; border-left: 6px solid #1abc9c; padding-left: 15px; text-align: left;">品項資訊詳情</h2>
+            <div class="detail-line"><span class="detail-label">完整名稱：</span><span id="det-name" style="font-weight:bold; color:#1abc9c;">-</span></div>
+            <div class="detail-line"><span class="detail-label">起始時間：</span><span id="det-start">-</span></div>
+            <div class="detail-line"><span class="detail-label">到期時間：</span><span id="det-exp">-</span></div>
+            <div class="detail-line"><span class="detail-label">目前狀態：</span><span id="det-status-badge" class="status-badge">-</span></div>
+            <div class="detail-line" style="border:none;"><span class="detail-label">剩餘時間：</span><span id="det-remain" style="font-family: Consolas; color:#e67e22; font-weight:bold;">-</span></div>
+            <button class="btn-cancel" style="width:100%; font-size:18px; padding:15px;" onclick="closeDetail()">關閉視窗</button>
+        </div>
+    </div>
+
+    <div id="modal-overlay">
+        <div class="modal">
+            <h2 id="modal-title" style="margin-bottom:25px; font-size:28px;">-</h2>
+            <div id="normal-action-area">
+                <button class="modal-btn btn-only-save" onclick="processAction(false)">僅紀錄</button>
+                <button class="modal-btn btn-print" onclick="processAction(true)">紀錄並列印</button>
+            </div>
+            <div id="purchase-date-area" style="display:none; border-top:1px solid #eee; margin-top:20px; padding-top:20px;">
+                <p>請輸入包裝效期日期：</p>
+                <input type="date" id="date-picker" style="font-size:20px; padding:10px; width:80%;">
+                <button class="btn-add" style="width:85%; margin-top:15px; padding:15px; border-radius:15px;" onclick="handleDateSave()">儲存日期效期</button>
+            </div>
+            <button class="btn-cancel" onclick="closeModal()">取消</button>
+        </div>
+    </div>
+
+    <div id="sidebar">
+        <div id="user-display" style="color:#bdc3c7; font-size:14px; margin-bottom:20px; text-align:center;">👤 未登入</div>
+        <button class="menu-btn" onclick="showCategory('purchase', this)">🚚 進貨</button>
+        <button class="menu-btn" onclick="showCategory('thaw', this)">❄️ 解凍</button>
+        <button class="menu-btn" onclick="showCategory('open', this)">📦 開封</button>
+        <button class="menu-btn" onclick="showCategory('process', this)">🍳 製備</button>
+        <button class="menu-btn admin-btn" onclick="showAdmin(this)">⚙️ 系統後台</button>
+        <button class="menu-btn summary-btn" onclick="showCategory('summary', this)">📊 即時效期總覽</button>
+    </div>
+
+    <div id="main-content"><div id="content-display"></div></div>
+
+    <script>
+        // 1. Firebase 設定
+        const firebaseConfig = {
+          apiKey: "AIzaSyAjW3zo1pzJawQEMTvKKAA7AzKZp_EnL3U",
+          authDomain: "mykitchen-8d01c.firebaseapp.com",
+          projectId: "mykitchen-8d01c",
+          storageBucket: "mykitchen-8d01c.firebasestorage.app",
+          messagingSenderId: "4806148029",
+          appId: "1:4806148029:web:1201e8cc679c04430b9cd4",
+          measurementId: "G-771HV6L1D2"
+        };
+
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+
+        // 2. 帳號對照表
+        const USERS = {
+            "Dadun": "131419",
+            "Shipai": "666888",
+            "Test": "1234"
+        };
+        let currentStore = ""; 
+        
+        const defaultStructure = {
+            'purchase': { '基底': [{name:'台梗九號米', time:6, unit:'month'}], '配菜': [{name:'冷凍綠花椰', time:1, unit:'month'}], '配料': [{name:'南投蒜粉', time:1, unit:'year'}], '其他': [{name:'進貨樣板', time:24, unit:'hour'}] },
+            'thaw': { '配菜': [{name:'冷凍蔬菜包', time:24, unit:'hour'}], '蛋白質': [{name:'去骨雞腿排', time:24, unit:'hour'}], '其他': [{name:'解凍樣板', time:24, unit:'hour'}] },
+            'open': { '醬料': [{name:'日式胡麻醬', time:7, unit:'day'}], '配料': [{name:'起司粉', time:30, unit:'day'}], '湯': [{name:'濃縮湯底', time:3, unit:'day'}], '飲料': [{name:'全脂鮮乳', time:3, unit:'day'}], '其他': [{name:'開封樣板', time:24, unit:'hour'}] },
+            'process': { '基底': [{name:'每日熟飯', time:4, unit:'hour'}], '配菜': [{name:'水煮青菜', time:3, unit:'hour'}], '蛋白質': [{name:'煎雞胸肉', time:6, unit:'hour'}], '醬料': [{name:'特調油醋', time:12, unit:'hour'}], '配料': [{name:'現切蔥花', time:12, unit:'hour'}], '湯品': [{name:'每日例湯', time:4, unit:'hour'}], '飲料': [{name:'手作紅茶', time:8, unit:'hour'}], '其他': [{name:'製備樣板', time:4, unit:'hour'}] }
+        };
+
+        let structure = defaultStructure;
+        let activeRecords = {};
+        let currentSelecting = null;
+        let currentCategory = '';
+
+        // 【核心】同步到雲端：依照店名存入 stores 集合
+        function syncToCloud() {
+            if (!currentStore) return;
+            db.collection("stores").doc(currentStore).set({
+                structure: structure,
+                records: activeRecords,
+                lastUpdate: new Date().getTime()
+            }).then(() => console.log("雲端同步成功"));
+        }
+
+        // 【核心】從雲端抓取該店資料
+        function loadStoreData() {
+            showToast(`正在載入 ${currentStore} 資料...`);
+            db.collection("stores").doc(currentStore).get().then((doc) => {
+                if (doc.exists) {
+                    const data = doc.data();
+                    structure = data.structure || defaultStructure;
+                    activeRecords = data.records || {};
+                    showToast("✅ 雲端同步完成");
+                } else {
+                    structure = defaultStructure;
+                    activeRecords = {};
+                    syncToCloud(); // 新帳號則建立初始檔
+                }
+                showCategory('summary', document.querySelector('.summary-btn'));
+            }).catch(err => alert("同步失敗: " + err));
+        }
+
+        function checkLogin() {
+            const user = document.getElementById('store-user').value;
+            const pass = document.getElementById('store-pw').value;
+            if (USERS[user] && USERS[user] === pass) {
+                currentStore = user;
+                document.getElementById('user-display').innerText = "👤 " + currentStore + " 管理員";
+                document.getElementById('login-overlay').style.display = 'none';
+                document.getElementById('main-content').style.display = 'block';
+                loadStoreData(); // 登入後抓資料
+            } else { alert("帳密錯誤"); }
+        }
+
+        // --- 以下功能邏輯保持不變 ---
+        function showCategory(category, btn) {
+            currentCategory = category;
+            document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            const display = document.getElementById('content-display');
+            if (category === 'summary') { renderSummary(); return; }
+            const catNames = { purchase: '進貨', thaw: '解凍', open: '開封', process: '製備' };
+            let html = `<h2>${catNames[category]}紀錄</h2>`;
+            for (let group in structure[category]) {
+                html += `<div class="category-group"><div class="category-title">${group}</div><div style="display:flex; flex-wrap:wrap;">`;
+                structure[category][group].forEach(item => {
+                    html += `<button class="item-btn" onclick="openModal('${item.name}', '${group}', ${item.time}, '${item.unit}')">${item.name}</button>`;
+                });
+                html += `</div></div>`;
+            }
+            display.innerHTML = html;
+        }
+
+        function openModal(name, group, time, unit) {
+            currentSelecting = { name, time, unit };
+            document.getElementById('modal-title').innerText = name;
+            document.getElementById('purchase-date-area').style.display = (currentCategory === 'purchase' && group === '配料') ? 'block' : 'none';
+            document.getElementById('modal-overlay').style.display = 'flex';
+        }
+
+        function closeModal() { document.getElementById('modal-overlay').style.display = 'none'; }
+        
+        function processAction() {
+            let h = currentSelecting.time;
+            if (currentSelecting.unit === 'day') h *= 24;
+            if (currentSelecting.unit === 'month') h *= (24 * 30);
+            if (currentSelecting.unit === 'year') h *= (24 * 365);
+            saveRecord(currentSelecting.name, h);
+        }
+
+        function handleDateSave() {
+            const dateVal = document.getElementById('date-picker').value;
+            if (!dateVal) return;
+            const target = new Date(dateVal); target.setHours(23,59,59);
+            const hours = (target - new Date()) / 3600000;
+            saveRecord(currentSelecting.name, hours);
+        }
+
+        function saveRecord(name, h) {
+            const now = new Date().getTime();
+            if (!activeRecords[name]) activeRecords[name] = [];
+            activeRecords[name].push({ start: now, expire: now + h * 3600000 });
+            syncToCloud(); 
+            closeModal();
+            showToast("✅ 紀錄成功");
+            if (currentCategory === 'summary') renderSummary();
+        }
+
+        function renderSummary() {
+            const display = document.getElementById('content-display');
+            display.innerHTML = `<h2>📊 即時效期總覽</h2>`;
+            const now = new Date().getTime();
+            const cats = { purchase: '🚚 進貨', thaw: '❄️ 解凍', open: '📦 開封', process: '🍳 製備' };
+            for (let catKey in structure) {
+                let html = `<div class="category-group"><div class="category-title">${cats[catKey]}</div><div class="summary-header-row"><div class="header-labels"><span>品項</span><span>起始</span><span>效期</span><span style="text-align:right">管理</span></div><div class="header-labels"><span>品項</span><span>起始</span><span>效期</span><span style="text-align:right">管理</span></div><div class="header-labels"><span>品項</span><span>起始</span><span>效期</span><span style="text-align:right">管理</span></div></div><div class="card-container">`;
+                let items = []; for(let g in structure[catKey]) { items = items.concat(structure[catKey][g]); }
+                items.forEach(item => {
+                    const recs = activeRecords[item.name]; const rec = (recs && recs.length > 0) ? recs[recs.length - 1] : null;
+                    let cls = "food-item-card";
+                    if (rec) { cls += " active-card"; if (rec.expire <= now) cls += " expired-card"; else if (rec.expire - now <= 86400000) cls += " warning-card"; }
+                    html += `<div class="${cls}" onclick="openDetail('${item.name}')"><span class="food-name">${item.name}</span><span class="time-text">${rec ? fmt(rec.start) : "-"}</span><span class="time-text">${rec ? fmt(rec.expire) : "-"}</span><div style="display:flex; justify-content: flex-end;" onclick="event.stopPropagation()">${rec ? `<button class="mini-btn btn-undo" onclick="undo('${item.name}')">復</button><button class="mini-btn btn-del" onclick="delRec('${item.name}')">清</button>` : ''}</div></div>`;
+                });
+                display.innerHTML += html + "</div></div>";
+            }
+        }
+
+        function openDetail(name) {
+            const recs = activeRecords[name]; if (!recs || recs.length === 0) return;
+            const rec = recs[recs.length - 1]; const now = new Date().getTime();
+            document.getElementById('det-name').innerText = name;
+            document.getElementById('det-start').innerText = new Date(rec.start).toLocaleString();
+            document.getElementById('det-exp').innerText = new Date(rec.expire).toLocaleString();
+            const badge = document.getElementById('det-status-badge');
+            const remainText = document.getElementById('det-remain');
+            const diff = rec.expire - now;
+            if (diff <= 0) { badge.innerText = "已過期"; badge.style.background = "#e74c3c"; remainText.innerText = "已超時"; }
+            else { 
+                if (diff <= 86400000) { badge.innerText = "即將過期"; badge.style.background = "#f1c40f"; }
+                else { badge.innerText = "計時中"; badge.style.background = "#2ecc71"; }
+                let d = Math.floor(diff/86400000), h = Math.floor((diff%86400000)/3600000), m = Math.floor((diff%3600000)/60000);
+                remainText.innerText = `${d}天 ${h}小時 ${m}分`;
+            }
+            document.getElementById('detail-overlay').style.display = 'flex';
+        }
+
+        function closeDetail() { document.getElementById('detail-overlay').style.display = 'none'; }
+        function showAdmin(btn) { renderAdmin(); document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); }
+        
+        function renderAdmin() {
+            const display = document.getElementById('content-display');
+            let html = `<h2>⚙️ 系統後台 - 品項管理</h2>`;
+            const cats = { purchase: '進貨', thaw: '解凍', open: '開封', process: '製備' };
+            for (let catKey in structure) {
+                html += `<div class="admin-section"><h3>【${cats[catKey]}】分組管理</h3>`;
+                for (let group in structure[catKey]) {
+                    html += `<div style="margin-bottom:15px; border:1px solid #eee; padding:15px; border-radius:10px;"><strong>${group}</strong> ➔ <input type="text" id="in-${catKey}-${group}" class="input-box" placeholder="名稱"> <input type="number" id="tm-${catKey}-${group}" class="input-box" placeholder="效期" style="width:60px;"> <select id="ut-${catKey}-${group}" class="input-box"><option value="hour">小時</option><option value="day">天</option><option value="month">月</option><option value="year">年</option></select> <button class="btn-add" onclick="addItem('${catKey}','${group}')">新增</button><table class="admin-table"><tbody>`;
+                    structure[catKey][group].forEach((item, idx) => {
+                        html += `<tr><td style="width:40%">${item.name}</td><td>${item.time} ${item.unit}</td><td style="text-align:right"><button class="btn-admin-move" onclick="moveItem('${catKey}','${group}',${idx},-1)">▲</button><button class="btn-admin-move" onclick="moveItem('${catKey}','${group}',${idx},1)">▼</button><button class="btn-admin-edit" onclick="editItem('${catKey}','${group}',${idx})">修改</button><button class="btn-admin-del" onclick="delItem('${catKey}','${group}',${idx})">刪除</button></td></tr>`;
+                    });
+                    html += `</tbody></table></div>`;
+                }
+                html += `</div>`;
+            }
+            display.innerHTML = html;
+        }
+
+        function editItem(c, g, i) {
+            const item = structure[c][g][i];
+            const newName = prompt("請輸入新的品項名稱：", item.name);
+            if (newName === null) return; 
+            const newTime = prompt("請輸入新的效期數字：", item.time);
+            if (newTime === null) return; 
+            structure[c][g][i].name = newName;
+            structure[c][g][i].time = parseInt(newTime);
+            syncToCloud(); renderAdmin(); showToast("✅ 修改成功");
+        }
+
+        function moveItem(c, g, i, dir) {
+            const targetIndex = i + dir; if (targetIndex < 0 || targetIndex >= structure[c][g].length) return;
+            const temp = structure[c][g][i]; structure[c][g][i] = structure[c][g][targetIndex]; structure[c][g][targetIndex] = temp;
+            syncToCloud(); renderAdmin();
+        }
+
+        function addItem(c,g){ const n=document.getElementById(`in-${c}-${g}`).value, t=document.getElementById(`tm-${c}-${g}`).value, u=document.getElementById(`ut-${c}-${g}`).value; if(!n||!t)return; structure[c][g].push({name:n,time:parseInt(t),unit:u}); syncToCloud(); renderAdmin(); }
+        function delItem(c,g,i){ if(confirm('確定要刪除此品項嗎？')){ structure[c][g].splice(i,1); syncToCloud(); renderAdmin(); } }
+        function undo(n){ activeRecords[n].pop(); syncToCloud(); renderSummary(); }
+        function delRec(n){ if(confirm('清除此紀錄？')){ delete activeRecords[n]; syncToCloud(); renderSummary(); } }
+        function showToast(m){ const t=document.getElementById("toast"); t.innerText=m; t.className="show"; setTimeout(()=>t.className="",2000); }
+        function fmt(ts){ const d = new Date(ts); return `${d.getMonth()+1}/${d.getDate()} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`; }
+    </script>
+</body>
+</html>
