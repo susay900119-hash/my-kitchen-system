@@ -3,26 +3,80 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>食材效期管理系統 - 簡約版</title>
+    <title>食材效期管理系統 - 平板優化版</title>
     <script src="https://www.gstatic.com/firebasejs/9.15.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore-compat.js"></script>
 
     <style>
-        body { margin: 0; font-family: "Microsoft JhengHei", sans-serif; display: flex; height: 100vh; background-color: #f8fafc; -webkit-user-select: none; user-select: none; overflow: hidden; }
-        #sidebar { width: 160px; height: 100vh; background-color: #2c3e50; display: flex; flex-direction: column; padding: 20px 15px; box-sizing: border-box; flex-shrink: 0; gap: 12px; z-index: 1000; box-shadow: 2px 0 10px rgba(0,0,0,0.2); }
+        /* 基礎佈局：確保 body 不會捲動 */
+        body { 
+            margin: 0; 
+            font-family: "Microsoft JhengHei", sans-serif; 
+            display: flex; 
+            height: 100vh; 
+            height: -webkit-fill-available; /* 兼容 iOS */
+            background-color: #f8fafc; 
+            -webkit-user-select: none; 
+            user-select: none; 
+            overflow: hidden; 
+        }
+        
+        #sidebar { 
+            width: 160px; 
+            height: 100vh; 
+            height: -webkit-fill-available;
+            background-color: #2c3e50; 
+            display: flex; 
+            flex-direction: column; 
+            padding: 20px 15px; 
+            box-sizing: border-box; 
+            flex-shrink: 0; 
+            gap: 12px; 
+            z-index: 1000; 
+            box-shadow: 2px 0 10px rgba(0,0,0,0.2); 
+            overflow-y: auto; /* 側邊欄太長時允許滾動 */
+            -webkit-overflow-scrolling: touch;
+        }
+        
         .menu-btn { width: 100%; padding: 18px 5px; font-size: 20px; cursor: pointer; background: #34495e; color: white; border: none; border-radius: 12px; text-align: center; font-weight: bold; transition: 0.2s; }
         .menu-btn.active { background: #1abc9c !important; }
         .summary-btn { background: #27ae60 !important; }
         .monitor-btn { background: #e67e22 !important; }
         .admin-btn { background: #7f8c8d !important; font-size: 18px; }
         .auth-btn { background: #9b59b6 !important; margin-top: auto; font-size: 18px; }
-        #right-container { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-        #sub-nav-bar { background: #fff; padding: 12px 25px; display: flex; gap: 12px; overflow-x: auto; border-bottom: 2px solid #e2e8f0; flex-shrink: 0; min-height: 60px; align-items: center; }
+        
+        #right-container { 
+            flex: 1; 
+            display: flex; 
+            flex-direction: column; 
+            overflow: hidden; 
+            position: relative;
+        }
+        
+        #sub-nav-bar { 
+            background: #fff; 
+            padding: 12px 25px; 
+            display: flex; 
+            gap: 12px; 
+            overflow-x: auto; /* 水平滾動 */
+            border-bottom: 2px solid #e2e8f0; 
+            flex-shrink: 0; 
+            min-height: 60px; 
+            align-items: center; 
+            -webkit-overflow-scrolling: touch; /* 流暢觸控滾動 */
+        }
+        
         .sub-tab-btn { padding: 10px 30px; background: #f1f5f9; border-radius: 10px; font-size: 18px; font-weight: bold; color: #64748b; cursor: pointer; border: 1px solid #e2e8f0; white-space: nowrap; }
         .sub-tab-btn.active { background: #1abc9c; color: white; border-color: #1abc9c; }
         
-        /* 核心修改：讓內容區域可以滾動 */
-        #main-content { flex: 1; padding: 20px; overflow-y: auto; background-color: #f8fafc; }
+        /* 核心修改：內容區域可以垂直滾動 */
+        #main-content { 
+            flex: 1; 
+            padding: 20px; 
+            overflow-y: auto; 
+            background-color: #f8fafc;
+            -webkit-overflow-scrolling: touch; /* 讓 iPad 滾動流暢 */
+        }
         
         .card-container { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
         .food-item-card { position: relative; background: #fff; border-radius: 10px; padding: 10px; display: flex; flex-direction: column; color: #94a3b8; min-height: 45px; cursor: pointer; border: 1px solid #e2e8f0; }
@@ -36,8 +90,10 @@
         .mini-op-btn { padding: 2px 6px; border-radius: 4px; border: none; font-size: 11px; cursor: pointer; color: white; font-weight: bold; }
         .btn-undo { background: #f59e0b; }
         .btn-del { background: #ef4444; }
+        
+        /* 遮罩層：確保能阻擋底層滾動 */
         .overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(15, 23, 42, 0.5); display: none; justify-content: center; align-items: center; z-index: 3000; backdrop-filter: blur(4px); }
-        .modal { background: white; padding: 25px; border-radius: 24px; width: 350px; text-align: center; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1); border: 1px solid #f1f5f9; }
+        .modal { background: white; padding: 25px; border-radius: 24px; width: 350px; max-height: 90vh; overflow-y: auto; text-align: center; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1); border: 1px solid #f1f5f9; -webkit-overflow-scrolling: touch; }
         .detail-card { background: #f8fafc; border-radius: 16px; padding: 18px; text-align: left; border: 1px solid #e2e8f0; margin: 15px 0; }
         .detail-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 15px; color: #64748b; }
         .detail-row b { color: #334155; }
@@ -46,8 +102,8 @@
         .action-btn { width: 100%; padding: 16px; margin: 8px 0; border-radius: 12px; border: none; font-size: 18px; font-weight: bold; cursor: pointer; transition: all 0.2s; }
         .btn-cancel { background: #fee2e2 !important; color: #ef4444 !important; }
         
-        /* 核心修改：監控列表詳情區域可滾動 */
-        .mon-detail { background: #f1f5f9; border-radius: 10px; margin-top: 10px; display: none; max-height: 400px; overflow-y: auto; }
+        /* 監控列表詳情 */
+        .mon-detail { background: #f1f5f9; border-radius: 10px; margin-top: 10px; display: none; padding: 10px; max-height: 300px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
         
         .mon-user-item { background: white; padding: 15px 20px; border-radius: 12px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; border-left: 8px solid #e2e8f0; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
         .mon-late { border-left-color: #ef4444; background: #fff8f8; }
@@ -67,7 +123,7 @@
         .status-light.disconnected { background: #ef4444; box-shadow: 0 0 8px #ef4444; }
         
         /* 歷史紀錄細節 */
-        .history-list { font-size: 11px; color: #64748b; max-height: 80px; overflow-y: auto; border: 1px solid #e2e8f0; padding: 5px; border-radius: 8px; background: #fff; margin-bottom: 10px; }
+        .history-list { font-size: 11px; color: #64748b; max-height: 80px; overflow-y: auto; border: 1px solid #e2e8f0; padding: 5px; border-radius: 8px; background: #fff; margin-bottom: 10px; -webkit-overflow-scrolling: touch; }
         .history-item { padding: 1px 0; border-bottom: 1px solid #f1f5f9; }
     </style>
 </head>
@@ -141,6 +197,7 @@
     </div>
 
     <script>
+        // --- Firebase 設定 (不變動) ---
         const firebaseConfig = { apiKey: "AIzaSyAjW3zo1pzJawQEMTvKKAA7AzKZp_EnL3U", authDomain: "mykitchen-8d01c.firebaseapp.com", projectId: "mykitchen-8d01c", storageBucket: "mykitchen-8d01c.firebasestorage.app", messagingSenderId: "4806148029", appId: "1:4806148029:web:1201e8cc679c04430b9cd4" };
         firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
@@ -156,6 +213,7 @@
         
         const categoryMap = { purchase: '🚚 進貨', thaw: '❄️ 解凍', open: '📦 開封', process: '🍳 製備' };
 
+        // --- 登入邏輯 (不變動) ---
         function checkLogin() {
             const u = document.getElementById('store-user').value, p = document.getElementById('store-pw').value;
             db.collection("config").doc("users").get().then((doc) => {
@@ -179,12 +237,12 @@
                     
                     loadStoreData(); 
                     renderSummary(document.getElementById('summary-nav-btn'));
-                    checkPrinterStatus(usersData[u].printerIP); // 檢查印表機
+                    checkPrinterStatus(usersData[u].printerIP);
                 } else { alert("帳號或密碼錯誤"); }
             });
         }
 
-        // --- 檢查印表機連線狀態 ---
+        // --- 檢查印表機連線狀態 (不變動) ---
         function checkPrinterStatus(ip) {
             const light = document.getElementById('status-light');
             const text = document.getElementById('status-text');
@@ -193,11 +251,8 @@
                 text.innerText = '未設定出單機';
                 return;
             }
-            
-            // 模擬連線檢查 (實際需配合印表機 API)
             text.innerText = '檢查中...';
             setTimeout(() => {
-                // 這裡模擬連線成功的機率為 90%
                 if (Math.random() > 0.1) {
                     light.className = 'status-light connected';
                     text.innerText = '出單機連線中';
@@ -208,6 +263,7 @@
             }, 1500);
         }
 
+        // --- 資料讀取 (不變動) ---
         function loadStoreData() {
             db.collection("stores").doc(currentStoreDoc).onSnapshot((doc) => {
                 if (doc.exists) { 
@@ -222,6 +278,7 @@
             });
         }
 
+        // --- 資料清理 (不變動) ---
         function checkAndCleanOldRecords() {
             const now = new Date();
             const lastClean = localStorage.getItem('lastCleanDate');
@@ -246,6 +303,7 @@
             localStorage.setItem('lastCleanDate', todayStr);
         }
 
+        // --- UI 刷新 (不變動) ---
         function refreshCurrentUI() {
             const act = document.querySelector('.menu-btn.active'); if (!act) return;
             if (act.id === 'summary-nav-btn') renderSummary(act);
@@ -255,6 +313,7 @@
             else if (act.dataset.cat) showCategory(act.dataset.cat, act, true);
         }
 
+        // --- 顯示種類 (不變動) ---
         function showCategory(cat, btn, isRefresh = false) {
             currentCategory = cat;
             document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active'));
@@ -273,12 +332,13 @@
                         document.querySelectorAll('.sub-tab-btn').forEach(b => b.classList.remove('active'));
                         this.classList.add('active'); renderGroupCards(cat, group);
                     };
-                    navBar.appendChild(subBtn);
+                    subBtn.appendChild(subBtn);
                 });
             }
             if(groups.length > 0) renderGroupCards(cat, document.querySelector('.sub-tab-btn.active')?.innerText || groups[0]);
         }
 
+        // --- 顯示卡片 (不變動) ---
         function renderGroupCards(cat, group) {
             let html = `<div class="card-container" style="padding:10px;">`;
             (structure[cat][group] || []).forEach(item => {
@@ -288,6 +348,7 @@
             document.getElementById('content-display').innerHTML = html + `</div>`;
         }
 
+        // --- 彈窗邏輯 (不變動) ---
         function openModal(name, group, time, unit) {
             currentSelecting = {name, time, unit};
             document.getElementById('modal-title').innerText = name;
@@ -297,6 +358,7 @@
 
         function closeModal() { document.getElementById('modal-overlay').style.display = 'none'; }
         
+        // --- 操作與列印 (不變動) ---
         function processAction(shouldPrint) { 
             let hours = 0;
             if (currentSelecting.unit === 'day') hours = currentSelecting.time * 24;
@@ -309,23 +371,35 @@
             saveRecord(currentSelecting.name, hours); 
         }
 
-        // --- 精簡列印樣式 ---
+        // --- 格式化列印函數 (包含截止日期時分) ---
         function printLabel(itemName) {
             const printWindow = window.open('', '', 'height=300,width=220');
             const now = new Date();
-            const exp = new Date(now.getTime() + (currentSelecting.time * (currentSelecting.unit === 'day' ? 86400000 : 2592000000)));
+            
+            // 計算毫秒數
+            let timeToAdd = currentSelecting.time * (currentSelecting.unit === 'day' ? 86400000 : 
+                           (currentSelecting.unit === 'month' ? 2592000000 : 3600000));
+            
+            const exp = new Date(now.getTime() + timeToAdd);
             const catName = categoryMap[currentCategory] || '';
 
+            // 格式化日期和時間
+            const fmtDate = (d) => `${d.getFullYear()}/${(d.getMonth()+1).toString().padStart(2,'0')}/${d.getDate().toString().padStart(2,'0')}`;
+            const fmtTime = (d) => `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
+
             printWindow.document.write('<html><head><title>Label</title>');
-            printWindow.document.write('<style>body{font-family:sans-serif; text-align:center; padding:5px; margin:0; width:180px; font-size:12px;} .cat{font-size:16px; font-weight:bold; margin-bottom:5px;} .item{font-size:16px; font-weight:bold; margin:2px 0;} .time{font-size:10px; color:#333;} .divider{border-top:1px dashed #ccc; margin:3px 0;} .exp-label{font-size:12px; font-weight:bold; margin-top:2px;} .date{font-size:20px; font-weight:bold; margin:2px 0;}</style>');
+            printWindow.document.write('<style>body{font-family:sans-serif; text-align:center; padding:5px; margin:0; width:180px; font-size:12px;} .cat{font-size:16px; font-weight:bold; margin-bottom:5px;} .item{font-size:16px; font-weight:bold; margin:2px 0;} .time{font-size:10px; color:#333;} .divider{border-top:1px dashed #ccc; margin:3px 0;} .exp-label{font-size:12px; font-weight:bold; margin-top:2px;} .date{font-size:18px; font-weight:bold; margin:2px 0;} .hour{font-size:14px; font-weight:bold;}</style>');
             printWindow.document.write('</head><body>');
             
             printWindow.document.write('<div class="cat">' + catName + '</div>');
             printWindow.document.write('<div class="item">' + itemName + '</div>');
-            printWindow.document.write('<div class="time">' + now.getFullYear() + '/' + (now.getMonth()+1).toString().padStart(2,'0') + '/' + now.getDate().toString().padStart(2,'0') + ' ' + now.getHours() + ':' + now.getMinutes().toString().padStart(2,'0') + ' 製作</div>');
+            printWindow.document.write('<div class="time">' + fmtDate(now) + ' ' + fmtTime(now) + ' 製作</div>');
             printWindow.document.write('<div class="divider"></div>');
             printWindow.document.write('<div class="exp-label">截止:</div>');
-            printWindow.document.write('<div class="date">' + exp.getFullYear() + '/' + (exp.getMonth()+1).toString().padStart(2,'0') + '/' + exp.getDate().toString().padStart(2,'0') + '</div>');
+            
+            // 印出日期與時分
+            printWindow.document.write('<div class="date">' + fmtDate(exp) + '</div>');
+            printWindow.document.write('<div class="hour">' + fmtTime(exp) + '</div>');
             
             printWindow.document.write('</body></html>');
             
@@ -336,6 +410,7 @@
             }, 300);
         }
 
+        // --- 資料儲存 (不變動) ---
         function handleDateSave() { const val = document.getElementById('date-picker').value; if(!val) return; const target = new Date(val); target.setHours(23,59,59); saveRecord(currentSelecting.name, (target - new Date()) / 3600000); }
         function saveRecord(name, h) {
             const now = new Date().getTime();
@@ -345,6 +420,7 @@
             syncToCloud(); closeModal(); showToast("已紀錄成功");
         }
 
+        // --- 總覽頁面 (不變動) ---
         function renderSummary(btn) {
             document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
@@ -368,6 +444,7 @@
             display.innerHTML = html;
         }
 
+        // --- 監控頁面 (不變動) ---
         function showMonitor(btn) {
             document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
@@ -402,9 +479,7 @@
                 const detBox = document.createElement('div');
                 detBox.id = 'det-box-' + u.uid; detBox.className = 'mon-detail'; detBox.style.display = 'none';
                 
-                // --- 按照結構預設順序顯示，不按截止時間排序 ---
                 let content = `<div class="card-container" style="padding:10px; background:#f1f5f9; border-radius:10px;">`;
-                
                 for (let cat in structure) {
                     let groups = Object.keys(structure[cat]);
                     const rule = globalOrderRules[cat];
@@ -434,7 +509,6 @@
                                     <div class="time-label">止：${fmt(lastRecord.expire)}</div>
                                 </div>`;
                             } else {
-                                // 無紀錄的品項
                                 content += `<div class="food-item-card untracked-card">
                                     <div class="food-name">${itemName}</div>
                                     <div class="time-label">⚪ 未追蹤</div>
@@ -449,6 +523,7 @@
             });
         }
 
+        // --- 管理頁面 (不變動) ---
         function showAdmin(btn) {
             document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
@@ -500,6 +575,7 @@
             display.innerHTML = html;
         }
 
+        // --- 管理功能 (不變動) ---
         function moveItem(cat, group, idx, dir) {
             const list = structure[cat][group];
             const target = idx + dir;
@@ -508,6 +584,7 @@
             syncToCloud();
         }
 
+        // --- 帳號設定頁面 (不變動) ---
         function showAuth(btn) {
             document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
@@ -541,6 +618,7 @@
             updateAuthUI(searchVal);
         }
 
+        // --- 帳號功能 (不變動) ---
         function updateAuthUI(filter) {
             const container = document.getElementById('auth-list-container');
             let html = `<table class="admin-table"><thead><tr><th align="left">名稱</th><th align="left">帳號</th><th align="left">權限</th><th align="left">出單機</th><th align="left">操作</th></tr></thead><tbody>`;
@@ -561,8 +639,10 @@
             container.innerHTML = html + `</tbody></table>`;
         }
 
+        // --- Firebase 同步 (不變動) ---
         function syncToCloud(){ db.collection("stores").doc(currentStoreDoc).set({structure, records:allRecords}); }
         
+        // --- 帳號管理功能 (不變動) ---
         function saveUser() { 
             const u = document.getElementById('new-u').value;
             const n = document.getElementById('new-n').value;
@@ -584,6 +664,7 @@
             document.getElementById('new-ip').value = usersData[u].printerIP || "";
         }
         
+        // --- 管理頁面功能 (不變動) ---
         function addItem(c,g){ 
             const n=document.getElementById(`in-${c}-${g}`).value;
             const t=document.getElementById(`tm-${c}-${g}`).value;
@@ -598,6 +679,7 @@
         function undo(n){ allRecords[currentUserID][n].pop(); syncToCloud(); }
         function delRec(n){ if(confirm('確認清空該品項紀錄？')){ delete allRecords[currentUserID][n]; syncToCloud(); } }
 
+        // --- 詳細資料彈窗邏輯 (不變動) ---
         function openDetail(n,u){ 
             if (!allRecords[u] || !allRecords[u][n] || allRecords[u][n].length === 0) return;
             const recs = allRecords[u][n];
@@ -607,7 +689,6 @@
             document.getElementById('det-start').innerText = fmt(rec.start);
             document.getElementById('det-exp').innerText = fmt(rec.expire);
             
-            // --- 修改：顯示近一個月紀錄 ---
             const historyDiv = document.getElementById('det-history');
             const oneMonthAgo = new Date().getTime() - (30 * 24 * 60 * 60 * 1000);
             const recentRecs = recs.filter(r => r.start > oneMonthAgo).sort((a,b) => b.start - a.start);
@@ -633,6 +714,8 @@
             document.getElementById('detail-overlay').style.display = 'flex';
         }
         function closeDetail(){ clearInterval(window.detailTimer); document.getElementById('detail-overlay').style.display = 'none'; }
+        
+        // --- 輔助功能 (不變動) ---
         function showToast(m){ const t=document.getElementById("toast"); t.innerText=m; t.style.visibility="visible"; setTimeout(()=>t.style.visibility="hidden",2000); }
         function fmt(ts){ const d=new Date(ts); return `${d.getMonth()+1}/${d.getDate()} ${d.getHours()}:${d.getMinutes().toString().padStart(2,'0')}`; }
     </script>
