@@ -302,35 +302,27 @@
             saveRecord(currentSelecting.name, hours); 
         }
 
-        // --- 修正後的列印樣式：依照要求排序年月日時分 ---
+        // --- 精簡列印樣式：按照你的要求 ---
         function printLabel(itemName) {
             const printWindow = window.open('', '', 'height=300,width=220');
             const now = new Date();
-            // 計算毫秒數: 依照 unit 決定乘上天還是月
-            let timeToAdd = currentSelecting.time * (currentSelecting.unit === 'day' ? 86400000 : (currentSelecting.unit === 'month' ? 2592000000 : 3600000));
-            const exp = new Date(now.getTime() + timeToAdd);
+            const exp = new Date(now.getTime() + (currentSelecting.time * (currentSelecting.unit === 'day' ? 86400000 : 2592000000)));
             const catName = categoryMap[currentCategory] || '';
 
-            // 輔助格式化函數
-            const fDate = (d) => `${d.getFullYear()}/${(d.getMonth()+1).toString().padStart(2,'0')}/${d.getDate().toString().padStart(2,'0')}`;
-            const fTime = (d) => `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
-
             printWindow.document.write('<html><head><title>Label</title>');
-            printWindow.document.write('<style>body{font-family:sans-serif; text-align:center; padding:5px; margin:0; width:180px; font-size:12px;} .cat{font-size:16px; font-weight:bold; margin-bottom:5px;} .item{font-size:16px; font-weight:bold; margin:2px 0;} .time{font-size:10px; color:#333;} .divider{border-top:1px dashed #ccc; margin:3px 0;} .exp-label{font-size:12px; font-weight:bold; margin-top:2px;} .date{font-size:18px; font-weight:bold; margin:2px 0;}</style>');
+            // 這裡調整樣式，確保文字清晰
+            printWindow.document.write('<style>body{font-family:sans-serif; text-align:center; padding:0; margin:0; width:180px; font-size:14px; line-height:1.2;} .line{margin: 3px 0; font-weight:bold;} .date{font-size:18px; font-weight:bold; margin: 2px 0;}</style>');
             printWindow.document.write('</head><body>');
             
-            // 第一行：動作
-            printWindow.document.write('<div class="cat">' + catName + '</div>');
+            // 第一行：動作 (種類)
+            printWindow.document.write('<div class="line">' + catName + '</div>');
             // 第二行：品項
-            printWindow.document.write('<div class="item">' + itemName + '</div>');
-            // 第三行：操作時間 (年月日時分)
-            printWindow.document.write('<div class="time">' + fDate(now) + ' ' + fTime(now) + '</div>');
-            
-            printWindow.document.write('<div class="divider"></div>');
-            
-            // 第四行：截止時間 (年月日時分)
-            printWindow.document.write('<div class="exp-label">截止:</div>');
-            printWindow.document.write('<div class="date">' + fDate(exp) + ' ' + fTime(exp) + '</div>');
+            printWindow.document.write('<div class="line">' + itemName + '</div>');
+            // 第三行：操作時間
+            printWindow.document.write('<div class="line">' + now.getFullYear() + '/' + (now.getMonth()+1).toString().padStart(2,'0') + '/' + now.getDate().toString().padStart(2,'0') + ' ' + now.getHours() + ':' + now.getMinutes().toString().padStart(2,'0') + '</div>');
+            // 第四行：截止時間
+            printWindow.document.write('<div class="line">截止:</div>');
+            printWindow.document.write('<div class="date">' + exp.getFullYear() + '/' + (exp.getMonth()+1).toString().padStart(2,'0') + '/' + exp.getDate().toString().padStart(2,'0') + '</div>');
             
             printWindow.document.write('</body></html>');
             
