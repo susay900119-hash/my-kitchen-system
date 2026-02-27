@@ -332,7 +332,7 @@
                         document.querySelectorAll('.sub-tab-btn').forEach(b => b.classList.remove('active'));
                         this.classList.add('active'); renderGroupCards(cat, group);
                     };
-                    subBtn.appendChild(subBtn);
+                    navBar.appendChild(subBtn);
                 });
             }
             if(groups.length > 0) renderGroupCards(cat, document.querySelector('.sub-tab-btn.active')?.innerText || groups[0]);
@@ -371,7 +371,7 @@
             saveRecord(currentSelecting.name, hours); 
         }
 
-        // --- 格式化列印函數 (包含截止日期時分) ---
+        // --- 格式化列印函數 (包含製作與截止日期時分) ---
         function printLabel(itemName) {
             const printWindow = window.open('', '', 'height=300,width=220');
             const now = new Date();
@@ -393,11 +393,13 @@
             
             printWindow.document.write('<div class="cat">' + catName + '</div>');
             printWindow.document.write('<div class="item">' + itemName + '</div>');
+            
+            // 修正：製作時間也顯示 時:分
             printWindow.document.write('<div class="time">' + fmtDate(now) + ' ' + fmtTime(now) + ' 製作</div>');
             printWindow.document.write('<div class="divider"></div>');
             printWindow.document.write('<div class="exp-label">截止:</div>');
             
-            // 印出日期與時分
+            // 顯示截止的日期與時分
             printWindow.document.write('<div class="date">' + fmtDate(exp) + '</div>');
             printWindow.document.write('<div class="hour">' + fmtTime(exp) + '</div>');
             
