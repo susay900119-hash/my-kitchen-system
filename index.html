@@ -3,11 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>食材效期管理系統 - 簡約版</title>
+    <title>食材效期管理系統</title>
     <script src="https://www.gstatic.com/firebasejs/9.15.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore-compat.js"></script>
 
     <style>
+        /* --- 原有樣式完全保留 --- */
         body { margin: 0; font-family: "Microsoft JhengHei", sans-serif; display: flex; height: 100vh; background-color: #f8fafc; -webkit-user-select: none; user-select: none; overflow: hidden; }
         #sidebar { width: 160px; height: 100vh; background-color: #2c3e50; display: flex; flex-direction: column; padding: 20px 15px; box-sizing: border-box; flex-shrink: 0; gap: 12px; z-index: 1000; box-shadow: 2px 0 10px rgba(0,0,0,0.2); }
         .menu-btn { width: 100%; padding: 18px 5px; font-size: 20px; cursor: pointer; background: #34495e; color: white; border: none; border-radius: 12px; text-align: center; font-weight: bold; transition: 0.2s; }
@@ -27,6 +28,8 @@
         .warning-card { background: #fff9e6 !important; border-left: 6px solid #f39c12 !important; }
         .expired-card { background: #fdf2f2 !important; border-left: 6px solid #e74c3c !important; }
         .untracked-card { background: #f1f5f9 !important; border-left: 6px solid #94a3b8 !important; }
+        .scrapped-card { background: #94a3b8 !important; border-left: 6px solid #64748b !important; color: #ffffff !important; }
+        .scrapped-card .time-label { color: #e2e8f0 !important; }
         .food-name { font-weight: bold; font-size: 15px; margin-bottom: 2px; }
         .time-label { font-size: 11px; color: #64748b; font-family: monospace; }
         .card-ops { position: absolute; right: 5px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 3px; }
@@ -34,13 +37,15 @@
         .btn-undo { background: #f59e0b; }
         .btn-del { background: #ef4444; }
         .overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(15, 23, 42, 0.5); display: none; justify-content: center; align-items: center; z-index: 3000; backdrop-filter: blur(4px); }
-        .modal { background: white; padding: 25px; border-radius: 24px; width: 350px; text-align: center; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1); border: 1px solid #f1f5f9; }
+        .modal { background: white; padding: 25px; border-radius: 24px; width: 380px; text-align: center; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1); border: 1px solid #f1f5f9; }
+        .modal-action-grid { display: flex; flex-direction: column; gap: 10px; margin-top: 15px; }
+        .modal-row-split { display: flex; gap: 10px; justify-content: center; }
         .detail-card { background: #f8fafc; border-radius: 16px; padding: 18px; text-align: left; border: 1px solid #e2e8f0; margin: 15px 0; }
         .detail-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 15px; color: #64748b; }
         .detail-row b { color: #334155; }
         .remain-box { background: #ffffff; color: #10b981; padding: 15px; border-radius: 12px; font-size: 26px; font-weight: 800; text-align: center; margin-top: 10px; border: 2px solid #10b981; box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.1); }
         .remain-expired { color: #ef4444 !important; border-color: #ef4444 !important; }
-        .action-btn { width: 100%; padding: 16px; margin: 8px 0; border-radius: 12px; border: none; font-size: 18px; font-weight: bold; cursor: pointer; transition: all 0.2s; }
+        .action-btn { width: 100%; padding: 16px; margin: 0; border-radius: 12px; border: none; font-size: 18px; font-weight: bold; cursor: pointer; transition: all 0.2s; }
         .btn-cancel { background: #fee2e2 !important; color: #ef4444 !important; }
         .mon-user-item { background: white; padding: 15px 20px; border-radius: 12px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; border-left: 8px solid #e2e8f0; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
         .mon-late { border-left-color: #ef4444; background: #fff8f8; }
@@ -52,16 +57,14 @@
         .admin-table td { padding: 10px; border-bottom: 1px solid #f1f5f9; }
         .sort-btn { padding: 6px 12px; margin-right: 5px; border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; cursor: pointer; color: #64748b; }
         #toast { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); background: #1e293b; color: white; padding: 12px 30px; border-radius: 50px; visibility: hidden; z-index: 5000; }
-        
-        /* 印表機狀態燈 */
         .printer-status { position: absolute; top: 15px; right: 20px; display: flex; align-items: center; gap: 8px; background: white; padding: 6px 12px; border-radius: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); font-size: 14px; }
         .status-light { width: 12px; height: 12px; border-radius: 50%; background: #ccc; }
         .status-light.connected { background: #10b981; box-shadow: 0 0 8px #10b981; }
         .status-light.disconnected { background: #ef4444; box-shadow: 0 0 8px #ef4444; }
-        
-        /* 歷史紀錄細節 */
         .history-list { font-size: 11px; color: #64748b; max-height: 80px; overflow-y: auto; border: 1px solid #e2e8f0; padding: 5px; border-radius: 8px; background: #fff; margin-bottom: 10px; }
         .history-item { padding: 1px 0; border-bottom: 1px solid #f1f5f9; }
+        .qty-btn { width: 45px; height: 45px; font-size: 18px; font-weight: bold; background: #f1f5f9; border: 2px solid #e2e8f0; border-radius: 10px; cursor: pointer; color: #64748b; margin: 2px; }
+        .qty-btn.active { background: #3b82f6; color: white; border-color: #3b82f6; }
     </style>
 </head>
 <body>
@@ -93,7 +96,6 @@
             <div id="status-light" class="status-light disconnected"></div>
             <span id="status-text">連線檢查中...</span>
         </div>
-        
         <div id="sub-nav-bar"></div>
         <div id="main-content"><div id="content-display"></div></div>
     </div>
@@ -102,17 +104,15 @@
         <div class="modal" onclick="event.stopPropagation()">
             <div style="font-size: 13px; color: #94a3b8; margin-bottom: 4px; font-weight: bold;">ITEM DETAILS</div>
             <h2 id="det-name" style="margin: 0 0 5px 0; color: #334155; font-size: 24px;">-</h2>
-            
             <div class="detail-card">
                 <div style="font-size: 12px; color: #64748b; font-weight:bold; margin-bottom: 5px;">📅 近一個月紀錄時間</div>
                 <div id="det-history" class="history-list">無</div>
-                
                 <div class="detail-row"><b>最近記錄</b> <span id="det-start">-</span></div>
                 <div class="detail-row"><b>效期截止</b> <span id="det-exp">-</span></div>
                 <div style="height: 1px; background: #e2e8f0; margin: 12px 0;"></div>
                 <div id="det-remain" class="remain-box">-</div>
             </div>
-            <button onclick="closeDetail()" class="action-btn" style="background:#f1f5f9; color:#475569; padding: 12px;">關閉視窗</button>
+            <button onclick="closeDetail()" class="action-btn" style="background:#f1f5f9; color:#475569; padding: 12px;">關閉</button>
         </div>
     </div>
 
@@ -120,16 +120,22 @@
         <div class="modal">
             <p style="color:#64748b; font-weight: bold;">請選擇操作項目</p>
             <h2 id="modal-title" style="color: #1e293b;">-</h2>
-            <div id="normal-action-area">
-                <button class="action-btn" onclick="processAction(false)" style="background:#3b82f6; color:white;">僅紀錄</button>
-                <button class="action-btn" onclick="processAction(true)" style="background:#10b981; color:white;">紀錄並列印</button>
+            <div id="input-date-area" style="display:none; border-top:1px solid #f1f5f9; margin-top:10px; padding-top:10px;">
+                <p style="font-size: 14px; color: #64748b; margin-bottom: 5px;">輸入原廠到期日期：</p>
+                <input type="date" id="date-picker" class="input-box" style="width:80%; margin-bottom: 10px;">
             </div>
-            <div id="purchase-date-area" style="display:none; border-top:1px solid #f1f5f9; margin-top:10px; padding-top:10px;">
-                <p style="font-size: 14px; color: #64748b;">輸入原廠日期：</p>
-                <input type="date" id="date-picker" class="input-box" style="width:80%;">
-                <button onclick="handleDateSave()" class="action-btn" style="background:#475569; color:white; font-size:16px;">儲存原廠效期</button>
+            <div style="border-top:1px solid #f1f5f9; margin-top:10px; padding-top:10px; margin-bottom: 15px;">
+                <p style="font-size: 14px; color: #64748b; margin-bottom: 8px;">選擇數量：</p>
+                <div id="qty-buttons">
+                    <button class="qty-btn active" onclick="setQty(1, this)">1</button>
+                    <button class="qty-btn" onclick="setQty(2, this)">2</button>
+                    <button class="qty-btn" onclick="setQty(3, this)">3</button>
+                    <button class="qty-btn" onclick="setQty(4, this)">4</button>
+                    <button class="qty-btn" onclick="setQty(5, this)">5</button>
+                    <input type="number" id="qty-input" class="input-box" style="width:60px; text-align:center; font-size:18px;" placeholder="其他" oninput="clearQtyBtns()">
+                </div>
             </div>
-            <button onclick="closeModal()" class="action-btn btn-cancel">取消返回</button>
+            <div id="modal-action-buttons" class="modal-action-grid"></div>
         </div>
     </div>
 
@@ -137,210 +143,63 @@
         const firebaseConfig = { apiKey: "AIzaSyAjW3zo1pzJawQEMTvKKAA7AzKZp_EnL3U", authDomain: "mykitchen-8d01c.firebaseapp.com", projectId: "mykitchen-8d01c", storageBucket: "mykitchen-8d01c.firebasestorage.app", messagingSenderId: "4806148029", appId: "1:4806148029:web:1201e8cc679c04430b9cd4" };
         firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
-
         let usersData = {}, currentStoreDoc = "Dadun", currentUserID = "", currentUserRole = "", structure = {}, allRecords = {}, currentSelecting = null, currentCategory = '', currentAdminTab = 'purchase';
+        let currentQty = 1;
 
-        const globalOrderRules = {
-            purchase: ["基底", "配菜", "配料", "其他"],
-            thaw: ["配菜", "蛋白質", "其他"],
-            open: ["基底", "醬料", "配料", "飲料", "湯", "其他"],
-            process: ["基底", "配菜", "蛋白質", "醬料", "配料", "湯品", "飲料", "其他"]
-        };
-        
+        const globalOrderRules = { purchase: ["基底", "配菜", "配料", "其他"], thaw: ["配菜", "蛋白質", "其他"], open: ["基底", "醬料", "配料", "飲料", "湯", "其他"], process: ["基底", "配菜", "蛋白質", "醬料", "配料", "湯品", "飲料", "其他"] };
         const categoryMap = { purchase: '🚚 進貨', thaw: '❄️ 解凍', open: '📦 開封', process: '🍳 製備' };
 
-        function checkLogin() {
-            const u = document.getElementById('store-user').value, p = document.getElementById('store-pw').value;
-            db.collection("config").doc("users").get().then((doc) => {
-                usersData = doc.exists ? doc.data() : {};
-                if (usersData[u] && usersData[u].pw === p) { 
-                    currentUserID = u; currentUserRole = usersData[u].role; 
-                    currentStoreDoc = usersData[u].targetStore || "Dadun";
-                    document.getElementById('login-overlay').style.display = 'none'; 
-                    
-                    const isAdmin = (currentUserRole === 'admin' || currentUserRole === 'developer');
-                    const isDev = (currentUserRole === 'developer');
-                    
-                    if (isDev) {
-                        document.getElementById('auth-nav-btn').style.display = 'block';
-                        document.getElementById('admin-nav-btn').style.display = 'block';
-                        document.getElementById('monitor-nav-btn').style.display = 'block';
-                    } else if (isAdmin) {
-                        document.getElementById('admin-nav-btn').style.display = 'block';
-                        document.getElementById('monitor-nav-btn').style.display = 'block';
-                    }
-                    
-                    loadStoreData(); 
-                    renderSummary(document.getElementById('summary-nav-btn'));
-                    checkPrinterStatus(usersData[u].printerIP); // 檢查印表機
-                } else { alert("帳號或密碼錯誤"); }
-            });
-        }
+        function checkLogin() { const u = document.getElementById('store-user').value, p = document.getElementById('store-pw').value; db.collection("config").doc("users").get().then((doc) => { usersData = doc.exists ? doc.data() : {}; if (usersData[u] && usersData[u].pw === p) { currentUserID = u; currentUserRole = usersData[u].role; currentStoreDoc = usersData[u].targetStore || "Dadun"; document.getElementById('login-overlay').style.display = 'none'; const isAdmin = (currentUserRole === 'admin' || currentUserRole === 'developer'); const isDev = (currentUserRole === 'developer'); if (isDev) { document.getElementById('auth-nav-btn').style.display = 'block'; document.getElementById('admin-nav-btn').style.display = 'block'; document.getElementById('monitor-nav-btn').style.display = 'block'; } else if (isAdmin) { document.getElementById('admin-nav-btn').style.display = 'block'; document.getElementById('monitor-nav-btn').style.display = 'block'; } loadStoreData(); renderSummary(document.getElementById('summary-nav-btn')); checkPrinterStatus(usersData[u].printerIP); } else { alert("帳號或密碼錯誤"); } }); }
+        function setQty(q, btn) { currentQty = q; document.querySelectorAll('.qty-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); document.getElementById('qty-input').value = ''; }
+        function clearQtyBtns() { document.querySelectorAll('.qty-btn').forEach(b => b.classList.remove('active')); currentQty = parseInt(document.getElementById('qty-input').value) || 1; }
+        function checkPrinterStatus(ip) { const light = document.getElementById('status-light'); const text = document.getElementById('status-text'); if (!ip || ip.length < 5) { light.className = 'status-light disconnected'; text.innerText = '未設定出單機'; return; } text.innerText = '檢查中...'; setTimeout(() => { if (Math.random() > 0.1) { light.className = 'status-light connected'; text.innerText = '出單機連線中'; } else { light.className = 'status-light disconnected'; text.innerText = '出單機斷線'; } }, 1500); }
+        function loadStoreData() { db.collection("stores").doc(currentStoreDoc).onSnapshot((doc) => { if (doc.exists) { const d = doc.data(); structure = d.structure || {}; allRecords = d.records || {}; refreshCurrentUI(); if (currentUserRole === 'admin' || currentUserRole === 'developer') { checkAndCleanOldRecords(); } } }); }
+        function checkAndCleanOldRecords() { const now = new Date(); const lastClean = localStorage.getItem('lastCleanDate'); const todayStr = now.toISOString().slice(0, 10); if (lastClean === todayStr) return; if (now.getDate() === 1) { let recordsChanged = false; const twoMonthsAgo = new Date(); twoMonthsAgo.setMonth(now.getMonth() - 2); twoMonthsAgo.setDate(1); twoMonthsAgo.setHours(0,0,0,0); const threshold = twoMonthsAgo.getTime(); for (let uid in allRecords) { for (let itemName in allRecords[uid]) { const originalLength = allRecords[uid][itemName].length; allRecords[uid][itemName] = allRecords[uid][itemName].filter(r => r.expire > threshold); if (allRecords[uid][itemName].length !== originalLength) { recordsChanged = true; } } } if (recordsChanged) { syncToCloud(); showToast("已自動清理上上個月以前資料"); } } localStorage.setItem('lastCleanDate', todayStr); }
+        function refreshCurrentUI() { const act = document.querySelector('.menu-btn.active'); if (!act) return; if (act.id === 'summary-nav-btn') renderSummary(act); else if (act.id === 'monitor-nav-btn') renderMonitorList(); else if (act.id === 'admin-nav-btn') renderAdminContent(); else if (act.id === 'auth-nav-btn') renderAuth(); else if (act.dataset.cat) showCategory(act.dataset.cat, act, true); }
+        function showCategory(cat, btn, isRefresh = false) { currentCategory = cat; document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); const navBar = document.getElementById('sub-nav-bar'); navBar.style.display = 'flex'; let groups = Object.keys(structure[cat] || {}); const rule = globalOrderRules[cat]; if (rule) { groups.sort((a, b) => { let idxA = rule.indexOf(a), idxB = rule.indexOf(b); if (idxA === -1) idxA = 99; if (idxB === -1) idxB = 99; return idxA - idxB; }); } if(!isRefresh) { navBar.innerHTML = ''; groups.forEach((group, idx) => { const subBtn = document.createElement('button'); subBtn.className = 'sub-tab-btn' + (idx === 0 ? ' active' : ''); subBtn.innerText = group; subBtn.onclick = function() { document.querySelectorAll('.sub-tab-btn').forEach(b => b.classList.remove('active')); this.classList.add('active'); renderGroupCards(cat, group); }; navBar.appendChild(subBtn); }); } if(groups.length > 0) renderGroupCards(cat, document.querySelector('.sub-tab-btn.active')?.innerText || groups[0]); }
+        function renderGroupCards(cat, group) { let html = `<div class="card-container" style="padding:10px;">`; (structure[cat][group] || []).forEach(item => { html += `<button style="height:90px; font-size:22px; border-radius:15px; border:1px solid #cbd5e1; background:#fff; font-weight:bold; cursor:pointer; color:#1e293b;" onclick="openModal(${JSON.stringify(item).replace(/"/g, "'")})">${item.name}</button>`; }); document.getElementById('content-display').innerHTML = html + `</div>`; }
 
-        // --- 檢查印表機連線狀態 ---
-        function checkPrinterStatus(ip) {
-            const light = document.getElementById('status-light');
-            const text = document.getElementById('status-text');
-            if (!ip || ip.length < 5) {
-                light.className = 'status-light disconnected';
-                text.innerText = '未設定出單機';
-                return;
-            }
-            
-            // 模擬連線檢查 (實際需配合印表機 API)
-            text.innerText = '檢查中...';
-            setTimeout(() => {
-                // 這裡模擬連線成功的機率為 90%
-                if (Math.random() > 0.1) {
-                    light.className = 'status-light connected';
-                    text.innerText = '出單機連線中';
-                } else {
-                    light.className = 'status-light disconnected';
-                    text.innerText = '出單機斷線';
-                }
-            }, 1500);
-        }
+        function openModal(item) {
+            currentSelecting = item;
+            document.getElementById('modal-title').innerText = item.name;
+            const dateArea = document.getElementById('input-date-area');
+            const actionButtons = document.getElementById('modal-action-buttons');
+            document.getElementById('date-picker').value = ''; 
+            document.getElementById('qty-input').value = '';
+            document.querySelectorAll('.qty-btn').forEach((b, i) => { if(i === 0) { b.classList.add('active'); currentQty = 1; } else b.classList.remove('active'); });
+            dateArea.style.display = item.useDate ? 'block' : 'none';
 
-        function loadStoreData() {
-            db.collection("stores").doc(currentStoreDoc).onSnapshot((doc) => {
-                if (doc.exists) { 
-                    const d = doc.data(); 
-                    structure = d.structure || {}; 
-                    allRecords = d.records || {}; 
-                    refreshCurrentUI(); 
-                    if (currentUserRole === 'admin' || currentUserRole === 'developer') {
-                        checkAndCleanOldRecords();
-                    }
-                }
-            });
-        }
+            let topBtn1 = item.useDate ? '僅儲存日期' : '僅記錄';
+            let topBtn2 = item.useDate ? '儲存並列印' : '紀錄並列印';
+            let topAction1 = item.useDate ? 'processWithDate(false)' : 'processWithoutDate(false)';
+            let topAction2 = item.useDate ? 'processWithDate(true)' : 'processWithoutDate(true)';
 
-        function checkAndCleanOldRecords() {
-            const now = new Date();
-            const lastClean = localStorage.getItem('lastCleanDate');
-            const todayStr = now.toISOString().slice(0, 10);
-            if (lastClean === todayStr) return;
-            if (now.getDate() === 1) {
-                let recordsChanged = false;
-                const twoMonthsAgo = new Date();
-                twoMonthsAgo.setMonth(now.getMonth() - 2);
-                twoMonthsAgo.setDate(1);
-                twoMonthsAgo.setHours(0,0,0,0);
-                const threshold = twoMonthsAgo.getTime();
-                for (let uid in allRecords) {
-                    for (let itemName in allRecords[uid]) {
-                        const originalLength = allRecords[uid][itemName].length;
-                        allRecords[uid][itemName] = allRecords[uid][itemName].filter(r => r.expire > threshold);
-                        if (allRecords[uid][itemName].length !== originalLength) { recordsChanged = true; }
-                    }
-                }
-                if (recordsChanged) { syncToCloud(); showToast("已自動清理上上個月以前資料"); }
-            }
-            localStorage.setItem('lastCleanDate', todayStr);
-        }
-
-        function refreshCurrentUI() {
-            const act = document.querySelector('.menu-btn.active'); if (!act) return;
-            if (act.id === 'summary-nav-btn') renderSummary(act);
-            else if (act.id === 'monitor-nav-btn') renderMonitorList();
-            else if (act.id === 'admin-nav-btn') renderAdminContent();
-            else if (act.id === 'auth-nav-btn') renderAuth();
-            else if (act.dataset.cat) showCategory(act.dataset.cat, act, true);
-        }
-
-        function showCategory(cat, btn, isRefresh = false) {
-            currentCategory = cat;
-            document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            const navBar = document.getElementById('sub-nav-bar'); navBar.style.display = 'flex';
-            let groups = Object.keys(structure[cat] || {});
-            const rule = globalOrderRules[cat];
-            if (rule) { groups.sort((a, b) => { let idxA = rule.indexOf(a), idxB = rule.indexOf(b); if (idxA === -1) idxA = 99; if (idxB === -1) idxB = 99; return idxA - idxB; }); }
-            if(!isRefresh) {
-                navBar.innerHTML = '';
-                groups.forEach((group, idx) => {
-                    const subBtn = document.createElement('button');
-                    subBtn.className = 'sub-tab-btn' + (idx === 0 ? ' active' : '');
-                    subBtn.innerText = group;
-                    subBtn.onclick = function() {
-                        document.querySelectorAll('.sub-tab-btn').forEach(b => b.classList.remove('active'));
-                        this.classList.add('active'); renderGroupCards(cat, group);
-                    };
-                    navBar.appendChild(subBtn);
-                });
-            }
-            if(groups.length > 0) renderGroupCards(cat, document.querySelector('.sub-tab-btn.active')?.innerText || groups[0]);
-        }
-
-        function renderGroupCards(cat, group) {
-            let html = `<div class="card-container" style="padding:10px;">`;
-            (structure[cat][group] || []).forEach(item => {
-                html += `<button style="height:90px; font-size:22px; border-radius:15px; border:1px solid #cbd5e1; background:#fff; font-weight:bold; cursor:pointer; color:#1e293b;" 
-                        onclick="openModal('${item.name}', '${group}', ${item.time}, '${item.unit}')">${item.name}</button>`;
-            });
-            document.getElementById('content-display').innerHTML = html + `</div>`;
-        }
-
-        function openModal(name, group, time, unit) {
-            currentSelecting = {name, time, unit};
-            document.getElementById('modal-title').innerText = name;
-            document.getElementById('purchase-date-area').style.display = (currentCategory==='purchase' && group==='配料') ? 'block' : 'none';
+            actionButtons.innerHTML = `
+                <button class="action-btn" onclick="${topAction1}" style="background:#475569; color:white;">${topBtn1}</button>
+                <button class="action-btn" onclick="${topAction2}" style="background:#10b981; color:white;">${topBtn2}</button>
+                <div class="modal-row-split">
+                    <button class="action-btn" onclick="processScrap()" style="background:#7f8c8d; color:white; flex:1;">報廢</button>
+                    <button class="action-btn btn-cancel" onclick="closeModal()" style="flex:1;">取消</button>
+                </div>
+            `;
             document.getElementById('modal-overlay').style.display = 'flex';
         }
 
-        function closeModal() { document.getElementById('modal-overlay').style.display = 'none'; }
-        
-        function processAction(shouldPrint) { 
-            let hours = 0;
-            if (currentSelecting.unit === 'day') hours = currentSelecting.time * 24;
-            else if (currentSelecting.unit === 'month') hours = currentSelecting.time * 24 * 30;
-            else hours = currentSelecting.time;
-            
-            if (shouldPrint) {
-                printLabel(currentSelecting.name);
-            }
-            saveRecord(currentSelecting.name, hours); 
-        }
-
-        // --- 精簡列印樣式：按照你的要求 ---
-        function printLabel(itemName) {
-            const printWindow = window.open('', '', 'height=300,width=220');
-            const now = new Date();
-            const exp = new Date(now.getTime() + (currentSelecting.time * (currentSelecting.unit === 'day' ? 86400000 : 2592000000)));
-            const catName = categoryMap[currentCategory] || '';
-
-            printWindow.document.write('<html><head><title>Label</title>');
-            // 這裡調整樣式，確保文字清晰
-            printWindow.document.write('<style>body{font-family:sans-serif; text-align:center; padding:0; margin:0; width:180px; font-size:14px; line-height:1.2;} .line{margin: 3px 0; font-weight:bold;} .date{font-size:18px; font-weight:bold; margin: 2px 0;}</style>');
-            printWindow.document.write('</head><body>');
-            
-            // 第一行：動作 (種類)
-            printWindow.document.write('<div class="line">' + catName + '</div>');
-            // 第二行：品項
-            printWindow.document.write('<div class="line">' + itemName + '</div>');
-            // 第三行：操作時間
-            printWindow.document.write('<div class="line">' + now.getFullYear() + '/' + (now.getMonth()+1).toString().padStart(2,'0') + '/' + now.getDate().toString().padStart(2,'0') + ' ' + now.getHours() + ':' + now.getMinutes().toString().padStart(2,'0') + '</div>');
-            // 第四行：截止時間
-            printWindow.document.write('<div class="line">截止:</div>');
-            printWindow.document.write('<div class="date">' + exp.getFullYear() + '/' + (exp.getMonth()+1).toString().padStart(2,'0') + '/' + exp.getDate().toString().padStart(2,'0') + '</div>');
-            
-            printWindow.document.write('</body></html>');
-            
-            printWindow.document.close();
-            setTimeout(() => {
-                printWindow.print();
-                printWindow.close();
-            }, 300);
-        }
-
-        function handleDateSave() { const val = document.getElementById('date-picker').value; if(!val) return; const target = new Date(val); target.setHours(23,59,59); saveRecord(currentSelecting.name, (target - new Date()) / 3600000); }
-        function saveRecord(name, h) {
+        function processScrap() {
             const now = new Date().getTime();
             if(!allRecords[currentUserID]) allRecords[currentUserID] = {};
-            if(!allRecords[currentUserID][name]) allRecords[currentUserID][name] = [];
-            allRecords[currentUserID][name].push({ start: now, expire: now + h * 3600000 });
-            syncToCloud(); closeModal(); showToast("已紀錄成功");
+            if(!allRecords[currentUserID][currentSelecting.name]) allRecords[currentUserID][currentSelecting.name] = [];
+            for(let i=0; i<currentQty; i++) {
+                allRecords[currentUserID][currentSelecting.name].push({ start: now, expire: 0, qty: 1, status: 'scrapped', cat: currentCategory });
+            }
+            syncToCloud(); closeModal(); showToast(`已報廢 ${currentQty} 筆`);
         }
+
+        function closeModal() { document.getElementById('modal-overlay').style.display = 'none'; }
+        function processWithoutDate(shouldPrint) { let hours = 0; if (currentSelecting.unit === 'hour') hours = currentSelecting.time; else if (currentSelecting.unit === 'day') hours = currentSelecting.time * 24; else if (currentSelecting.unit === 'month') hours = currentSelecting.time * 24 * 30; if (shouldPrint) { printLabel(currentSelecting.name, null, currentQty); } saveRecord(currentSelecting.name, hours, currentQty); }
+        function processWithDate(shouldPrint) { const val = document.getElementById('date-picker').value; if(!val) { alert("請選擇原廠到期日期"); return; } const target = new Date(val); target.setHours(23,59,59); const hours = (target - new Date()) / 3600000; if (shouldPrint) { printLabel(currentSelecting.name, target, currentQty); } saveRecord(currentSelecting.name, hours, currentQty); }
+        function printLabel(itemName, customExpireDate, count) { const printWindow = window.open('', '', 'height=300,width=220'); const now = new Date(); let expDate = new Date(); if (customExpireDate) { expDate = customExpireDate; } else { let ms = currentSelecting.time * (currentSelecting.unit === 'hour' ? 3600000 : (currentSelecting.unit === 'day' ? 86400000 : 2592000000)); expDate = new Date(now.getTime() + ms); } const catName = categoryMap[currentCategory] || ''; printWindow.document.write('<html><head><title>Label</title><style>body{font-family:sans-serif; text-align:center; padding:0; margin:0; width:180px; font-size:14px; line-height:1.2;} .line{margin: 3px 0; font-weight:bold;} .date{font-size:18px; font-weight:bold; margin: 2px 0;}</style></head><body>'); for(let i=0; i<count; i++) { printWindow.document.write('<div style="page-break-after: always; padding-top: 10px;">'); printWindow.document.write('<div class="line">' + catName + '</div>'); printWindow.document.write('<div class="line">' + itemName + '</div>'); printWindow.document.write('<div class="line">' + now.getFullYear() + '/' + (now.getMonth()+1).toString().padStart(2,'0') + '/' + now.getDate().toString().padStart(2,'0') + ' ' + now.getHours() + ':' + now.getMinutes().toString().padStart(2,'0') + '</div>'); printWindow.document.write('<div class="line">截止:</div>'); printWindow.document.write('<div class="date">' + expDate.getFullYear() + '/' + (expDate.getMonth()+1).toString().padStart(2,'0') + '/' + expDate.getDate().toString().padStart(2,'0') + '</div>'); printWindow.document.write('</div>'); } printWindow.document.write('</body></html>'); printWindow.document.close(); setTimeout(() => { printWindow.print(); printWindow.close(); }, 300); }
+        function saveRecord(name, h, count) { const now = new Date().getTime(); const expireTime = now + h * 3600000; if(!allRecords[currentUserID]) allRecords[currentUserID] = {}; if(!allRecords[currentUserID][name]) allRecords[currentUserID][name] = []; for(let i=0; i<count; i++) { allRecords[currentUserID][name].push({ start: now, expire: expireTime, qty: 1, cat: currentCategory }); } syncToCloud(); closeModal(); showToast(`已紀錄 ${count} 筆`); }
 
         function renderSummary(btn) {
             document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active'));
@@ -356,8 +215,18 @@
                     structure[k][g].forEach(item => {
                         const recs = allRecords[currentUserID]?.[item.name], rec = (recs && recs.length > 0) ? recs[recs.length-1] : null;
                         let cls = "food-item-card" + (rec ? " active-card" : "");
-                        if (rec) { if (rec.expire <= now) cls += " expired-card"; else if (rec.expire - now <= 86400000) cls += " warning-card"; }
-                        html += `<div class="${cls}" onclick="openDetail('${item.name}','${currentUserID}')"><div class="food-name">${item.name}</div><div class="time-label">止：${rec ? fmt(rec.expire) : "--/-- --:--"}</div><div class="card-ops" onclick="event.stopPropagation()">${rec ? `<button class="mini-op-btn btn-undo" onclick="undo('${item.name}')">復</button><button class="mini-op-btn btn-del" onclick="delRec('${item.name}')">清</button>` : ""}</div></div>`;
+                        let timeLabel = rec ? fmt(rec.expire) : "--/-- --:--";
+                        if (rec) { 
+                            if (rec.expire === 0 || rec.status === 'scrapped') { 
+                                cls += " scrapped-card"; 
+                                timeLabel = "品項已報廢";
+                            } else if (rec.expire <= now) {
+                                cls += " expired-card"; 
+                            } else if (rec.expire - now <= 86400000) {
+                                cls += " warning-card"; 
+                            }
+                        }
+                        html += `<div class="${cls}" onclick="openDetail('${item.name}','${currentUserID}')"><div class="food-name">${item.name}</div><div class="time-label">止：${timeLabel}</div><div class="card-ops" onclick="event.stopPropagation()">${rec ? `<button class="mini-op-btn btn-undo" onclick="undo('${item.name}')">復</button><button class="mini-op-btn btn-del" onclick="delRec('${item.name}')">清</button>` : ""}</div></div>`;
                     });
                 }
                 html += `</div>`;
@@ -365,273 +234,108 @@
             display.innerHTML = html;
         }
 
-        function showMonitor(btn) {
-            document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            document.getElementById('sub-nav-bar').style.display = 'none';
-            renderMonitorList();
+        function openDetail(n,u){ 
+            if (!allRecords[u] || !allRecords[u][n] || allRecords[u][n].length === 0) return; 
+            const recs = allRecords[u][n]; 
+            const rec = recs[recs.length-1]; 
+            document.getElementById('det-name').innerText = n; 
+            document.getElementById('det-start').innerText = fmt(rec.start); 
+            document.getElementById('det-exp').innerText = rec.expire === 0 ? "已報廢" : fmt(rec.expire); 
+            const historyDiv = document.getElementById('det-history'); 
+            const oneMonthAgo = new Date().getTime() - (30 * 24 * 60 * 60 * 1000); 
+            const recentRecs = recs.filter(r => r.start > oneMonthAgo).sort((a,b) => b.start - a.start); 
+            
+            if (recentRecs.length > 0) { 
+                historyDiv.innerHTML = recentRecs.map(r => {
+                    let icon = '🚚'; 
+                    if (r.status === 'scrapped') icon = '🗑️';
+                    else if (r.cat === 'thaw') icon = '❄️';
+                    else if (r.cat === 'open') icon = '📦';
+                    else if (r.cat === 'process') icon = '🍳';
+                    
+                    let label = r.status === 'scrapped' ? '報廢' : (categoryMap[r.cat] || '紀錄').replace(/[^\u4e00-\u9fa5]/g, '');
+                    return `<div class="history-item">${icon} ${label}: ${fmt(r.start)} (份數: ${r.qty || 1})</div>`;
+                }).join(''); 
+            } else { 
+                historyDiv.innerHTML = "無一個月內紀錄"; 
+            } 
+            
+            const updateRemain = () => { 
+                if(rec.expire === 0) { document.getElementById('det-remain').innerText = "品項報廢"; return; } 
+                const diff = rec.expire - new Date().getTime(); 
+                const box = document.getElementById('det-remain'); 
+                if (diff <= 0) { box.innerText = "已過期"; box.classList.add('remain-expired'); } 
+                else { const h = Math.floor(diff/3600000), m = Math.floor((diff%3600000)/60000), s = Math.floor((diff%60000)/1000); box.innerText = `${h}時 ${m}分 ${s}秒`; box.classList.remove('remain-expired'); } 
+            }; 
+            updateRemain(); window.detailTimer = setInterval(updateRemain, 1000); document.getElementById('detail-overlay').style.display = 'flex'; 
         }
 
-        function renderMonitorList() {
-            const display = document.getElementById('content-display');
-            const searchVal = document.getElementById('mon-search-input')?.value || "";
-            display.innerHTML = `<h2>👁️ 全員監控</h2>
-                <input type="text" id="mon-search-input" class="input-box" style="width:300px; margin-bottom:15px;" placeholder="搜尋員工名稱..." value="${searchVal}">
-                <div id="mon-list-container"></div>`;
-            document.getElementById('mon-search-input').addEventListener('input', (e) => { updateMonitorUI(e.target.value); });
-            updateMonitorUI(searchVal);
-        }
-
-        function updateMonitorUI(filter) {
-            const container = document.getElementById('mon-list-container'); container.innerHTML = "";
-            const now = new Date().getTime();
-            let users = Object.keys(usersData).map(uid => {
-                let last = 0;
-                if(allRecords[uid]) { for(let f in allRecords[uid]) { const r = allRecords[uid][f]; if(r.length>0) last = Math.max(last, r[r.length-1].start); } }
-                return { uid, last, name: usersData[uid].name || uid, isLate: (now - last > 86400000 || last === 0) };
-            }).filter(u => u.name.toLowerCase().includes(filter.toLowerCase()));
-            users.sort((a,b) => b.isLate - a.isLate);
-            users.forEach(u => {
-                const item = document.createElement('div');
-                item.className = `mon-user-item ${u.isLate ? 'mon-late' : ''}`;
-                item.innerHTML = `<div class="mon-info-left"><b>👤 ${u.name}</b><small style="color:#94a3b8;">最後操作：${u.last ? fmt(u.last) : '無紀錄'}</small></div><div class="mon-status-right">${u.isLate ? '❗ 24H未操作' : '✅ 正常'} 〉</div>`;
-                item.onclick = () => { const det = document.getElementById('det-box-' + u.uid); det.style.display = det.style.display === 'block' ? 'none' : 'block'; };
-                const detBox = document.createElement('div');
-                detBox.id = 'det-box-' + u.uid; detBox.className = 'mon-detail'; detBox.style.display = 'none';
-                
-                // --- 按照結構預設順序顯示，不按截止時間排序 ---
-                let content = `<div class="card-container" style="padding:10px; background:#f1f5f9; border-radius:10px;">`;
-                
-                for (let cat in structure) {
-                    let groups = Object.keys(structure[cat]);
-                    const rule = globalOrderRules[cat];
-                    if (rule) {
-                        groups.sort((a, b) => {
-                            let idxA = rule.indexOf(a), idxB = rule.indexOf(b);
-                            if (idxA === -1) idxA = 99; if (idxB === -1) idxB = 99;
-                            return idxA - idxB;
-                        });
-                    }
-
-                    groups.forEach(group => {
-                        structure[cat][group].forEach(item => {
-                            const itemName = item.name;
-                            const records = allRecords[u.uid]?.[itemName];
-                            
-                            if (records && records.length > 0) {
-                                const lastRecord = records[records.length - 1]; // 僅取最後一筆
-                                let isExpired = lastRecord.expire <= now;
-                                let isWarning = !isExpired && (lastRecord.expire - now <= 86400000);
-                                let cls = "food-item-card active-card";
-                                if (isExpired) cls += " expired-card";
-                                else if (isWarning) cls += " warning-card";
-
-                                content += `<div class="${cls}">
-                                    <div class="food-name">${itemName}</div>
-                                    <div class="time-label">止：${fmt(lastRecord.expire)}</div>
-                                </div>`;
-                            } else {
-                                // 無紀錄的品項
-                                content += `<div class="food-item-card untracked-card">
-                                    <div class="food-name">${itemName}</div>
-                                    <div class="time-label">⚪ 未追蹤</div>
-                                </div>`;
-                            }
-                        });
-                    });
-                }
-                
-                detBox.innerHTML = content + `</div>`;
-                container.appendChild(item); container.appendChild(detBox);
-            });
-        }
-
-        function showAdmin(btn) {
-            document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            renderAdminContent();
-        }
-
-        function renderAdminContent() {
-            const navBar = document.getElementById('sub-nav-bar');
-            navBar.style.display = 'flex'; navBar.innerHTML = '';
-            const cats = { purchase: '🚚 進貨', thaw: '❄️ 解凍', open: '📦 開封', process: '🍳 製備' };
-            for(let key in cats) {
-                const btn = document.createElement('button');
-                btn.className = 'sub-tab-btn' + (currentAdminTab === key ? ' active' : '');
-                btn.innerText = cats[key];
-                btn.onclick = () => { currentAdminTab = key; renderAdminContent(); };
-                navBar.appendChild(btn);
-            }
-            const display = document.getElementById('content-display');
-            let html = `<h2>⚙️ 管理：${cats[currentAdminTab]}</h2>`;
-            let groups = Object.keys(structure[currentAdminTab] || {});
-            const rule = globalOrderRules[currentAdminTab];
-            if (rule) { groups.sort((a, b) => { let idxA = rule.indexOf(a), idxB = rule.indexOf(b); if (idxA === -1) idxA = 99; if (idxB === -1) idxB = 99; return idxA - idxB; }); }
-
-            groups.forEach(g => {
+        function showMonitor(btn) { document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); document.getElementById('sub-nav-bar').style.display = 'none'; renderMonitorList(); }
+        function renderMonitorList() { const display = document.getElementById('content-display'); const searchVal = document.getElementById('mon-search-input')?.value || ""; display.innerHTML = `<h2>👁️ 全員監控</h2><input type="text" id="mon-search-input" class="input-box" style="width:300px; margin-bottom:15px;" placeholder="搜尋員工名稱..." value="${searchVal}"><div id="mon-list-container"></div>`; document.getElementById('mon-search-input').addEventListener('input', (e) => { updateMonitorUI(e.target.value); }); updateMonitorUI(searchVal); }
+        function updateMonitorUI(filter) { const container = document.getElementById('mon-list-container'); container.innerHTML = ""; const now = new Date().getTime(); let users = Object.keys(usersData).map(uid => { let last = 0; if(allRecords[uid]) { for(let f in allRecords[uid]) { const r = allRecords[uid][f]; if(r.length>0) last = Math.max(last, r[r.length-1].start); } } return { uid, last, name: usersData[uid].name || uid, isLate: (now - last > 86400000 || last === 0) }; }).filter(u => u.name.toLowerCase().includes(filter.toLowerCase())); users.sort((a,b) => b.isLate - a.isLate); users.forEach(u => { const item = document.createElement('div'); item.className = `mon-user-item ${u.isLate ? 'mon-late' : ''}`; item.innerHTML = `<div class="mon-info-left"><b>👤 ${u.name}</b><small style="color:#94a3b8;">最後操作：${u.last ? fmt(u.last) : '無紀錄'}</small></div><div class="mon-status-right">${u.isLate ? '❗ 超過24H未操作' : '✅ 正常'} 〉</div>`; item.onclick = () => { const det = document.getElementById('det-box-' + u.uid); det.style.display = det.style.display === 'block' ? 'none' : 'block'; }; const detBox = document.createElement('div'); detBox.id = 'det-box-' + u.uid; detBox.className = 'mon-detail'; detBox.style.display = 'none'; let content = `<div class="card-container" style="padding:10px; background:#f1f5f9; border-radius:10px;">`; for (let cat in structure) { let groups = Object.keys(structure[cat]); const rule = globalOrderRules[cat]; if (rule) { groups.sort((a, b) => { let idxA = rule.indexOf(a), idxB = rule.indexOf(b); if (idxA === -1) idxA = 99; if (idxB === -1) idxB = 99; return idxA - idxB; }); } groups.forEach(group => { structure[cat][group].forEach(item => { const itemName = item.name; const records = allRecords[u.uid]?.[itemName]; if (records && records.length > 0) { const lastRecord = records[records.length - 1]; let isExpired = lastRecord.expire <= now && lastRecord.expire !== 0; let isScrapped = lastRecord.expire === 0; let cls = "food-item-card active-card"; if (isScrapped) cls += " scrapped-card"; else if (isExpired) cls += " expired-card"; content += `<div class="${cls}"><div class="food-name">${itemName}</div><div class="time-label">止：${isScrapped ? '報廢' : fmt(lastRecord.expire)}</div></div>`; } else { content += `<div class="food-item-card untracked-card"><div class="food-name">${itemName}</div><div class="time-label">⚪ 未追蹤</div></div>`; } }); }); } detBox.innerHTML = content + `</div>`; container.appendChild(item); container.appendChild(detBox); }); }
+        function showAdmin(btn) { document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); renderAdminContent(); }
+        
+        // 【核心修改位置：優化管理頁面輸入框間距】
+        function renderAdminContent() { 
+            const navBar = document.getElementById('sub-nav-bar'); 
+            navBar.style.display = 'flex'; 
+            navBar.innerHTML = ''; 
+            const cats = { purchase: '🚚 進貨', thaw: '❄️ 解凍', open: '📦 開封', process: '🍳 製備' }; 
+            for(let key in cats) { 
+                const btn = document.createElement('button'); 
+                btn.className = 'sub-tab-btn' + (currentAdminTab === key ? ' active' : ''); 
+                btn.innerText = cats[key]; 
+                btn.onclick = () => { currentAdminTab = key; renderAdminContent(); }; 
+                navBar.appendChild(btn); 
+            } 
+            const display = document.getElementById('content-display'); 
+            let html = `<h2>⚙️ 管理：${cats[currentAdminTab]}</h2>`; 
+            let groups = Object.keys(structure[currentAdminTab] || {}); 
+            const rule = globalOrderRules[currentAdminTab]; 
+            if (rule) { 
+                groups.sort((a, b) => { let idxA = rule.indexOf(a), idxB = rule.indexOf(b); if (idxA === -1) idxA = 99; if (idxB === -1) idxB = 99; return idxA - idxB; }); 
+            } 
+            groups.forEach(g => { 
+                // 下方新增了 margin-right 樣式來拉開間距
                 html += `<div class="admin-section">
                     <strong>分組：${g}</strong><br>
-                    <input id="in-${currentAdminTab}-${g}" class="input-box" placeholder="名稱">
-                    <input id="tm-${currentAdminTab}-${g}" type="number" class="input-box" style="width:70px;" placeholder="數值">
-                    <select id="un-${currentAdminTab}-${g}" class="input-box">
+                    <input id="in-${currentAdminTab}-${g}" class="input-box" placeholder="名稱" style="margin-right: 8px;">
+                    <input id="tm-${currentAdminTab}-${g}" type="number" class="input-box" style="width:70px; margin-right: 8px;" placeholder="數值">
+                    <select id="un-${currentAdminTab}-${g}" class="input-box" style="margin-right: 8px;">
                         <option value="hour">小時</option>
                         <option value="day">天</option>
                         <option value="month">月</option>
                     </select>
-                    <button onclick="addItem('${currentAdminTab}','${g}')" style="background:#1abc9c; color:white; border:none; padding:10px 15px; border-radius:8px; cursor:pointer;">新增</button>
-                    <table class="admin-table">`;
-                (structure[currentAdminTab][g]||[]).forEach((item, idx) => {
-                    const unitLabel = item.unit==='hour'?'小時':(item.unit==='day'?'天':'月');
-                    html += `<tr>
-                        <td width="55%">${item.name} (${item.time}${unitLabel})</td>
-                        <td>
-                            <button class="sort-btn" onclick="moveItem('${currentAdminTab}','${g}',${idx},-1)">↑</button>
-                            <button class="sort-btn" onclick="moveItem('${currentAdminTab}','${g}',${idx},1)">↓</button>
-                            <button onclick="delItem('${currentAdminTab}','${g}',${idx})" style="color:#ef4444; background:none; border:none; cursor:pointer;">刪除</button>
-                        </td>
-                    </tr>`;
-                });
-                html += `</table></div>`;
-            });
-            display.innerHTML = html;
+                    <label style="margin:0 15px 0 5px; font-size:14px; color:#64748b; vertical-align: middle; cursor:pointer;">
+                        <input type="checkbox" id="ck-${currentAdminTab}-${g}" style="vertical-align: middle; margin-right: 4px;"> 啟用原廠到期日期
+                    </label>
+                    <button onclick="addItem('${currentAdminTab}','${g}')" style="background:#1abc9c; color:white; border:none; padding:10px 18px; border-radius:8px; cursor:pointer; font-weight:bold; margin-left: 5px;">新增</button>
+                    <table class="admin-table">`; 
+                (structure[currentAdminTab][g]||[]).forEach((item, idx) => { 
+                    const unitLabel = item.unit==='hour'?'小時':(item.unit==='day'?'天':'月'); 
+                    const useDateLabel = item.useDate ? ' <span style="color:#10b981; font-size:12px;">(啟用原廠到期日期)</span>' : ''; 
+                    html += `<tr><td width="55%">${item.name} (${item.time}${unitLabel})${useDateLabel}</td><td><button class="sort-btn" onclick="moveItem('${currentAdminTab}','${g}',${idx},-1)">↑</button><button class="sort-btn" onclick="moveItem('${currentAdminTab}','${g}',${idx},1)">↓</button><button onclick="delItem('${currentAdminTab}','${g}',${idx})" style="color:#ef4444; background:none; border:none; cursor:pointer;">刪除</button></td></tr>`; 
+                }); 
+                html += `</table></div>`; 
+            }); 
+            display.innerHTML = html; 
         }
 
-        function moveItem(cat, group, idx, dir) {
-            const list = structure[cat][group];
-            const target = idx + dir;
-            if (target < 0 || target >= list.length) return;
-            [list[idx], list[target]] = [list[target], list[idx]];
-            syncToCloud();
-        }
-
-        function showAuth(btn) {
-            document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            document.getElementById('sub-nav-bar').style.display = 'none';
-            renderAuth();
-        }
-
-        function renderAuth() {
-            const display = document.getElementById('content-display');
-            const searchVal = document.getElementById('auth-search-input')?.value || "";
-            display.innerHTML = `<h2>🔑 帳號設定</h2>
-                <div class="admin-section">
-                    <h3>👤 新增/修改帳號</h3>
-                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                        <input type="text" id="new-n" class="input-box" placeholder="顯示名稱" style="flex:1; min-width:120px;">
-                        <input type="text" id="new-u" class="input-box" placeholder="登入帳號" style="flex:1; min-width:120px;">
-                        <input type="text" id="new-p" class="input-box" placeholder="密碼" style="flex:1; min-width:120px;">
-                        <select id="new-r" class="input-box" style="flex:1; min-width:120px;">
-                            <option value="staff">員工 (staff)</option>
-                            <option value="admin">管理 (admin)</option>
-                            <option value="developer">開發者 (developer)</option>
-                        </select>
-                        <input type="text" id="new-ip" class="input-box" placeholder="出單機 IP/位址" style="flex:2; min-width:200px;">
-                        <button onclick="saveUser()" style="background:#1abc9c; color:white; padding:10px 20px; border:none; border-radius:8px; cursor:pointer; font-weight:bold; width:100%;">儲存帳號資訊</button>
-                    </div>
-                    <hr style="margin:20px 0; border:0; border-top:1px solid #eee;">
-                    <input type="text" id="auth-search-input" class="input-box" style="width:250px;" placeholder="搜尋帳號/名稱..." value="${searchVal}">
-                    <div id="auth-list-container"></div>
-                </div>`;
-            document.getElementById('auth-search-input').addEventListener('input', (e) => { updateAuthUI(e.target.value); });
-            updateAuthUI(searchVal);
-        }
-
-        function updateAuthUI(filter) {
-            const container = document.getElementById('auth-list-container');
-            let html = `<table class="admin-table"><thead><tr><th align="left">名稱</th><th align="left">帳號</th><th align="left">權限</th><th align="left">出單機</th><th align="left">操作</th></tr></thead><tbody>`;
-            for(let u in usersData) {
-                if(u.toLowerCase().includes(filter.toLowerCase()) || (usersData[u].name && usersData[u].name.includes(filter))) {
-                    html += `<tr>
-                        <td>${usersData[u].name || '-'}</td>
-                        <td>${u}</td>
-                        <td>${usersData[u].role}</td>
-                        <td>${usersData[u].printerIP || '未設定'}</td>
-                        <td>
-                            <button onclick="editUser('${u}')">修改</button>
-                            <button onclick="deleteUser('${u}')" style="color:red; background:none; border:none; cursor:pointer;">刪除</button>
-                        </td>
-                    </tr>`;
-                }
-            }
-            container.innerHTML = html + `</tbody></table>`;
-        }
-
+        function moveItem(cat, group, idx, dir) { const list = structure[cat][group]; const target = idx + dir; if (target < 0 || target >= list.length) return; [list[idx], list[target]] = [list[target], list[idx]]; syncToCloud(); }
+        function showAuth(btn) { document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); document.getElementById('sub-nav-bar').style.display = 'none'; renderAuth(); }
+        function renderAuth() { const display = document.getElementById('content-display'); const searchVal = document.getElementById('auth-search-input')?.value || ""; display.innerHTML = `<h2>🔑 帳號設定</h2><div class="admin-section"><h3>👤 新增/修改帳號</h3><div style="display: flex; gap: 10px; flex-wrap: wrap;"><input type="text" id="new-n" class="input-box" placeholder="顯示名稱" style="flex:1; min-width:120px;"><input type="text" id="new-u" class="input-box" placeholder="登入帳號" style="flex:1; min-width:120px;"><input type="text" id="new-p" class="input-box" placeholder="密碼" style="flex:1; min-width:120px;"><select id="new-r" class="input-box" style="flex:1; min-width:120px;"><option value="staff">員工 (staff)</option><option value="admin">管理 (admin)</option><option value="developer">開發者 (developer)</option></select><input type="text" id="new-ip" class="input-box" placeholder="出單機 IP/位址" style="flex:2; min-width:200px;"><button onclick="saveUser()" style="background:#1abc9c; color:white; padding:10px 20px; border:none; border-radius:8px; cursor:pointer; font-weight:bold; width:100%;">儲存帳號資訊</button></div><hr style="margin:20px 0; border:0; border-top:1px solid #eee;"><input type="text" id="auth-search-input" class="input-box" style="width:250px;" placeholder="搜尋帳號/名稱..." value="${searchVal}"><div id="auth-list-container"></div></div>`; document.getElementById('auth-search-input').addEventListener('input', (e) => { updateAuthUI(e.target.value); }); updateAuthUI(searchVal); }
+        function updateAuthUI(filter) { const container = document.getElementById('auth-list-container'); let html = `<table class="admin-table"><thead><tr><th align="left">名稱</th><th align="left">帳號</th><th align="left">權限</th><th align="left">出單機</th><th align="left">操作</th></tr></thead><tbody>`; for(let u in usersData) { if(u.toLowerCase().includes(filter.toLowerCase()) || (usersData[u].name && usersData[u].name.includes(filter))) { html += `<tr><td>${usersData[u].name || '-'}</td><td>${u}</td><td>${usersData[u].role}</td><td>${usersData[u].printerIP || '未設定'}</td><td><button onclick="editUser('${u}')">修改</button><button onclick="deleteUser('${u}')" style="color:red; background:none; border:none; cursor:pointer;">刪除</button></td></tr>`; } } container.innerHTML = html + `</tbody></table>`; }
         function syncToCloud(){ db.collection("stores").doc(currentStoreDoc).set({structure, records:allRecords}); }
-        
-        function saveUser() { 
-            const u = document.getElementById('new-u').value;
-            const n = document.getElementById('new-n').value;
-            const p = document.getElementById('new-p').value;
-            const r = document.getElementById('new-r').value;
-            const ip = document.getElementById('new-ip').value;
-            if(!u || !p) return; 
-            usersData[u] = { pw: p, role: r, name: n, targetStore: currentStoreDoc, printerIP: ip }; 
-            db.collection("config").doc("users").set(usersData).then(() => { showToast("已儲存"); renderAuth(); }); 
-        }
-
+        function saveUser() { const u = document.getElementById('new-u').value; const n = document.getElementById('new-n').value; const p = document.getElementById('new-p').value; const r = document.getElementById('new-r').value; const ip = document.getElementById('new-ip').value; if(!u || !p) return; usersData[u] = { pw: p, role: r, name: n, targetStore: currentStoreDoc, printerIP: ip }; db.collection("config").doc("users").set(usersData).then(() => { showToast("已儲存"); renderAuth(); }); }
         function deleteUser(u) { if(!confirm('確認刪除該帳號？')) return; delete usersData[u]; db.collection("config").doc("users").set(usersData).then(()=>renderAuth()); }
-        
-        function editUser(u) { 
-            document.getElementById('new-u').value = u;
-            document.getElementById('new-n').value = usersData[u].name || "";
-            document.getElementById('new-p').value = usersData[u].pw;
-            document.getElementById('new-r').value = usersData[u].role; 
-            document.getElementById('new-ip').value = usersData[u].printerIP || "";
-        }
-        
-        function addItem(c,g){ 
-            const n=document.getElementById(`in-${c}-${g}`).value;
-            const t=document.getElementById(`tm-${c}-${g}`).value;
-            const u=document.getElementById(`un-${c}-${g}`).value;
-            if(!n||!t)return; 
-            structure[c][g].push({name:n, time:parseInt(t), unit:u}); 
-            syncToCloud(); 
-            showToast("已新增品項");
-        }
-
+        function editUser(u) { document.getElementById('new-u').value = u; document.getElementById('new-n').value = usersData[u].name || ""; document.getElementById('new-p').value = usersData[u].pw; document.getElementById('new-r').value = usersData[u].role; document.getElementById('new-ip').value = usersData[u].printerIP || ""; }
+        function addItem(c,g){ const n=document.getElementById(`in-${c}-${g}`).value; const t=document.getElementById(`tm-${c}-${g}`).value; const u=document.getElementById(`un-${c}-${g}`).value; const d=document.getElementById(`ck-${c}-${g}`).checked; if(!n||!t)return; if(!structure[c]) structure[c] = {}; if(!structure[c][g]) structure[c][g] = []; structure[c][g].push({name:n, time:parseInt(t), unit:u, useDate:d}); syncToCloud(); showToast("已新增品項"); }
         function delItem(c,g,i){ if(confirm('確認刪除？')){ structure[c][g].splice(i,1); syncToCloud(); } }
         function undo(n){ allRecords[currentUserID][n].pop(); syncToCloud(); }
         function delRec(n){ if(confirm('確認清空該品項紀錄？')){ delete allRecords[currentUserID][n]; syncToCloud(); } }
-
-        function openDetail(n,u){ 
-            if (!allRecords[u] || !allRecords[u][n] || allRecords[u][n].length === 0) return;
-            const recs = allRecords[u][n];
-            const rec = recs[recs.length-1];
-            
-            document.getElementById('det-name').innerText = n;
-            document.getElementById('det-start').innerText = fmt(rec.start);
-            document.getElementById('det-exp').innerText = fmt(rec.expire);
-            
-            // --- 修改：顯示近一個月紀錄 ---
-            const historyDiv = document.getElementById('det-history');
-            const oneMonthAgo = new Date().getTime() - (30 * 24 * 60 * 60 * 1000);
-            const recentRecs = recs.filter(r => r.start > oneMonthAgo).sort((a,b) => b.start - a.start);
-            
-            if (recentRecs.length > 0) {
-                historyDiv.innerHTML = recentRecs.map(r => 
-                    `<div class="history-item">🚚 ${fmt(r.start)} (效期: ${fmt(r.expire)})</div>`
-                ).join('');
-            } else {
-                historyDiv.innerHTML = "無一個月內紀錄";
-            }
-
-            const updateRemain = () => {
-                const diff = rec.expire - new Date().getTime();
-                const box = document.getElementById('det-remain');
-                if (diff <= 0) { box.innerText = "已過期"; box.classList.add('remain-expired'); }
-                else {
-                    const h = Math.floor(diff/3600000), m = Math.floor((diff%3600000)/60000), s = Math.floor((diff%60000)/1000);
-                    box.innerText = `${h}時 ${m}分 ${s}秒`; box.classList.remove('remain-expired');
-                }
-            };
-            updateRemain(); window.detailTimer = setInterval(updateRemain, 1000);
-            document.getElementById('detail-overlay').style.display = 'flex';
-        }
         function closeDetail(){ clearInterval(window.detailTimer); document.getElementById('detail-overlay').style.display = 'none'; }
         function showToast(m){ const t=document.getElementById("toast"); t.innerText=m; t.style.visibility="visible"; setTimeout(()=>t.style.visibility="hidden",2000); }
-        function fmt(ts){ const d=new Date(ts); return `${d.getMonth()+1}/${d.getDate()} ${d.getHours()}:${d.getMinutes().toString().padStart(2,'0')}`; }
+        function fmt(ts){ if(ts===0) return "報廢"; const d=new Date(ts); return `${d.getMonth()+1}/${d.getDate()} ${d.getHours()}:${d.getMinutes().toString().padStart(2,'0')}`; }
     </script>
 </body>
 </html>
