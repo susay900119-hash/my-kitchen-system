@@ -7,6 +7,7 @@
     <script src="https://www.gstatic.com/firebasejs/9.15.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore-compat.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
 
     <style>
         /* --- 原有樣式完全保留 --- */
@@ -86,6 +87,7 @@
         
         .daily-note-area { margin-top: 15px; border-top: 2px dashed #e2e8f0; padding-top: 15px; }
         .daily-note-input { width: 100%; height: 80px; padding: 10px; border: 1px solid #cbd5e1; border-radius: 12px; font-size: 14px; resize: none; box-sizing: border-box; background: #fffdf5; font-family: inherit; }
+        .weekday-header { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin-bottom: 5px; text-align: center; font-size: 12px; font-weight: bold; color: #64748b; }
     </style>
 </head>
 <body>
@@ -313,9 +315,81 @@
         function saveRecord(name, h, count) { const now = new Date().getTime(); const expireTime = now + h * 3600000; if(!allRecords[currentUserID]) allRecords[currentUserID] = {}; if(!allRecords[currentUserID][name]) allRecords[currentUserID][name] = []; for(let i=0; i<count; i++) { allRecords[currentUserID][name].push({ start: now, expire: expireTime, qty: 1, cat: currentCategory }); } syncToCloud(); closeModal(); showToast(`已紀錄 ${count} 筆`); }
         function printLabel(itemName, customExpireDate, count) { const printWindow = window.open('', '', 'height=300,width=220'); const now = new Date(); let expDate = new Date(); if (customExpireDate) { expDate = customExpireDate; } else { let ms = currentSelecting.time * (currentSelecting.unit === 'hour' ? 3600000 : (currentSelecting.unit === 'day' ? 86400000 : 2592000000)); expDate = new Date(now.getTime() + ms); } const catName = categoryMap[currentCategory] || ''; printWindow.document.write('<html><head><title>Label</title><style>body{font-family:sans-serif; text-align:center; padding:0; margin:0; width:180px; font-size:14px; line-height:1.2;} .line{margin: 3px 0; font-weight:bold;} .date{font-size:18px; font-weight:bold; margin: 2px 0;}</style></head><body>'); for(let i=0; i<count; i++) { printWindow.document.write('<div style="page-break-after: always; padding-top: 10px;">'); printWindow.document.write('<div class="line">' + catName + '</div>'); printWindow.document.write('<div class="line">' + itemName + '</div>'); printWindow.document.write('<div class="line">' + now.getFullYear() + '/' + (now.getMonth()+1).toString().padStart(2,'0') + '/' + now.getDate().toString().padStart(2,'0') + ' ' + now.getHours() + ':' + now.getMinutes().toString().padStart(2,'0') + '</div>'); printWindow.document.write('<div class="line">截止:</div>'); printWindow.document.write('<div class="date">' + expDate.getFullYear() + '/' + (expDate.getMonth()+1).toString().padStart(2,'0') + '/' + expDate.getDate().toString().padStart(2,'0') + '</div>'); printWindow.document.write('</div>'); } printWindow.document.write('</body></html>'); printWindow.document.close(); setTimeout(() => { printWindow.print(); printWindow.close(); }, 300); }
         function renderSummary(btn) { document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); document.getElementById('sub-nav-bar').style.display = 'none'; const display = document.getElementById('content-display'); const now = new Date().getTime(); let html = `<h2>📊 我的操作總覽</h2>`; const cats = { purchase: '進貨', thaw: '解凍', open: '開封', process: '製備' }; for(let k in cats) { html += `<div style="background:#fff; padding:10px; border-radius:10px; margin-top:15px; font-weight:bold; border-bottom: 2px solid #e2e8f0;">${k==='purchase'?'🚚':k==='thaw'?'❄️':k==='open'?'📦':'🍳'} ${cats[k]}</div><div class="card-container" style="margin-top:10px;">`; for(let g in structure[k]) { (structure[k][g] || []).forEach(item => { const recs = allRecords[currentUserID]?.[item.name], rec = (recs && recs.length > 0) ? recs[recs.length-1] : null; let cls = "food-item-card" + (rec ? " active-card" : ""); let timeLabel = rec ? fmt(rec.expire) : "--/-- --:--"; if (rec) { if (rec.expire === 0 || rec.status === 'scrapped') { cls += " scrapped-card"; timeLabel = "品項已報廢"; } else if (rec.expire <= now) { cls += " expired-card"; } else if (rec.expire - now <= 86400000) { cls += " warning-card"; } } html += `<div class="${cls}" onclick="openDetail('${item.name}','${currentUserID}')"><div class="food-name">${item.name}</div><div class="time-label">止：${timeLabel}</div><div class="card-ops" onclick="event.stopPropagation()">${rec ? `<button class="mini-op-btn btn-undo" onclick="undo('${item.name}')">復</button><button class="mini-op-btn btn-del" onclick="delRec('${item.name}')">清</button>` : ""}</div></div>`; }); } html += `</div>`; } display.innerHTML = html; }
-        function showReport(btn) { document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); const navBar = document.getElementById('sub-nav-bar'); navBar.style.display = 'flex'; navBar.innerHTML = `<button class="sub-tab-btn ${currentReportMode==='usage'?'active':''}" onclick="currentReportMode='usage'; showReport(document.getElementById('report-nav-btn'));">📈 用量分析</button><button class="sub-tab-btn ${currentReportMode==='stability'?'active':''}" onclick="currentReportMode='stability'; showReport(document.getElementById('report-nav-btn'));">⚙️ 操作穩定度</button>`; renderReportContent(); }
-        function renderReportContent() { const display = document.getElementById('content-display'); display.innerHTML = `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;"><h2>${currentReportMode==='usage'?'📈 用量分析':'⚙️ 操作穩定度'} (${usersData[currentUserID]?.name || currentUserID})</h2></div><div id="report-main-body" class="report-layout"></div>`; if (currentReportMode === 'usage') renderUsageSection(); else renderStabilitySection(); }
-        function renderUsageSection() { const body = document.getElementById('report-main-body'); const todayStr = new Date().toISOString().split('T')[0]; const actions = { purchase: '🚚 進貨', thaw: '❄️ 解凍', open: '📦 開封', process: '🍳 製備' }; body.innerHTML = `<div class="report-left"><div class="admin-section" style="padding:15px; margin-bottom:15px;"><div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;"><input type="date" id="rep-s-date" class="input-box" value="${window.repStartDate || todayStr}" onchange="applyUsageFilter()"> 至 <input type="date" id="rep-e-date" class="input-box" value="${window.repEndDate || todayStr}" onchange="applyUsageFilter()"><input type="text" id="rep-search" class="input-box" placeholder="🔍 搜尋品名" style="flex:1;" oninput="applyUsageFilter()"></div><div style="display:flex; gap:8px;">${Object.entries(actions).map(([k, v]) => `<button class="sub-tab-btn ${currentReportAction===k?'active':''}" style="flex:1; font-size:13px;" onclick="currentReportAction='${k}'; renderUsageSection();">${v}</button>`).join('')}</div></div><div id="usage-table-container"></div></div><div class="report-right"><h3 style="margin:0;">趨勢比對 (最多5項)</h3><div style="margin: 10px 0; font-size: 12px; color: #94a3b8;">* 點選左側品項以同步顏色並加入比對</div><div class="chart-container" style="flex:1; position:relative;"><canvas id="usageChart"></canvas></div></div>`; applyUsageFilter(); }
+        
+        // --- 紀錄報告部分 ---
+
+        function showReport(btn) { 
+            document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active')); 
+            btn.classList.add('active'); 
+            const navBar = document.getElementById('sub-nav-bar'); 
+            navBar.style.display = 'flex'; 
+            navBar.innerHTML = `<button class="sub-tab-btn ${currentReportMode==='usage'?'active':''}" onclick="currentReportMode='usage'; renderReportContent();">📈 用量分析</button><button class="sub-tab-btn ${currentReportMode==='stability'?'active':''}" onclick="currentReportMode='stability'; renderReportContent();">⚙️ 操作穩定度</button>`; 
+            renderReportContent(); 
+        }
+
+        function renderReportContent() { 
+            const display = document.getElementById('content-display'); 
+            display.innerHTML = `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;"><h2>${currentReportMode==='usage'?'📈 用量分析':'⚙️ 操作穩定度'} (${usersData[currentUserID]?.name || currentUserID})</h2></div><div id="report-main-body" class="report-layout"></div>`; 
+            if (currentReportMode === 'usage') renderUsageSection(); 
+            else renderStabilitySection(); 
+        }
+
+        function renderUsageSection() { 
+            const body = document.getElementById('report-main-body'); 
+            const todayStr = new Date().toISOString().split('T')[0]; 
+            const actions = { purchase: '🚚 進貨', thaw: '❄️ 解凍', open: '📦 開封', process: '🍳 製備' }; 
+            body.innerHTML = `
+                <div class="report-left">
+                    <div class="admin-section" style="padding:15px; margin-bottom:15px;">
+                        <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+                            <input type="date" id="rep-s-date" class="input-box" value="${window.repStartDate || todayStr}" onchange="applyUsageFilter()"> 至 
+                            <input type="date" id="rep-e-date" class="input-box" value="${window.repEndDate || todayStr}" onchange="applyUsageFilter()">
+                            <input type="text" id="rep-search" class="input-box" placeholder="🔍 搜尋品名" style="flex:1;" oninput="applyUsageFilter()">
+                            <button onclick="downloadUsageExcel()" style="background:#27ae60; color:white; border:none; padding:10px 15px; border-radius:8px; cursor:pointer; font-weight:bold;">📥 下載區間紀錄 (.xlsx)</button>
+                        </div>
+                        <div style="display:flex; gap:8px;">
+                            ${Object.entries(actions).map(([k, v]) => `<button class="sub-tab-btn ${currentReportAction===k?'active':''}" style="flex:1; font-size:13px;" onclick="currentReportAction='${k}'; renderUsageSection();">${v}</button>`).join('')}
+                        </div>
+                    </div>
+                    <div id="usage-table-container"></div>
+                </div>
+                <div class="report-right">
+                    <h3 style="margin:0;">趨勢比對 (最多5項)</h3>
+                    <div style="margin: 10px 0; font-size: 12px; color: #94a3b8;">* 點選左側品項以同步顏色並加入比對</div>
+                    <div class="chart-container" style="flex:1; position:relative;"><canvas id="usageChart"></canvas></div>
+                </div>`; 
+            applyUsageFilter(); 
+        }
+
+        function downloadUsageExcel() {
+            const s = document.getElementById('rep-s-date').value, e = document.getElementById('rep-e-date').value;
+            const startTs = new Date(s + " 00:00:00").getTime(), endTs = new Date(e + " 23:59:59").getTime();
+            const myRecs = allRecords[currentUserID] || {};
+            let excelData = [["日期時間", "類別", "品項名稱", "數量", "狀態"]];
+            
+            for(let name in myRecs) {
+                if(name === 'dailyNotes') continue;
+                myRecs[name].forEach(r => {
+                    if(r.start >= startTs && r.start <= endTs) {
+                        const d = new Date(r.start);
+                        const dateStr = `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()} ${d.getHours()}:${d.getMinutes().toString().padStart(2,'0')}`;
+                        excelData.push([
+                            dateStr,
+                            categoryMap[r.cat] || r.cat,
+                            name,
+                            r.qty || 1,
+                            r.status === 'scrapped' ? '報廢' : '正常'
+                        ]);
+                    }
+                });
+            }
+            if(excelData.length === 1) { alert("此區間無紀錄可匯出"); return; }
+            const wb = XLSX.utils.book_new();
+            const ws = XLSX.utils.aoa_to_sheet(excelData);
+            XLSX.utils.book_append_sheet(wb, ws, "用量分析紀錄");
+            XLSX.writeFile(wb, `用量紀錄_${s}_至_${e}.xlsx`);
+        }
+
         function applyUsageFilter() { const s = document.getElementById('rep-s-date').value, e = document.getElementById('rep-e-date').value; const searchTxt = document.getElementById('rep-search').value.toLowerCase(); window.repStartDate = s; window.repEndDate = e; const startTs = new Date(s + " 00:00:00").getTime(), endTs = new Date(e + " 23:59:59").getTime(); const daysCount = Math.max(1, Math.ceil((endTs - startTs) / (24*3600*1000))); const myRecs = allRecords[currentUserID] || {}; let html = ''; const catGroups = structure[currentReportAction] || {}; for(let groupName in catGroups) { let groupHtml = `<div class="report-group-header">📍 ${groupName}</div><table class="stat-table"><thead><tr><th>品項</th><th>總份數</th><th>日均份</th><th>總次數</th><th>日均次</th></tr></thead><tbody>`; let hasItem = false; catGroups[groupName].forEach(item => { if(searchTxt && !item.name.toLowerCase().includes(searchTxt)) return; const recs = (myRecs[item.name] || []).filter(r => r.cat === currentReportAction && r.start >= startTs && r.start <= endTs && r.status !== 'scrapped'); const totalQty = recs.reduce((sum, r) => sum + (r.qty || 1), 0); const totalTimes = recs.length; if (totalTimes > 0 || searchTxt) { hasItem = true; const fullName = `[${categoryMap[currentReportAction]}] ${item.name}`; const selectIdx = globalSelectedItems.findIndex(i => i.fullName === fullName); const isSelected = selectIdx > -1; const rowStyle = isSelected ? `style="background-color: ${reportColors[selectIdx]}; color: white;"` : ""; groupHtml += `<tr class="${isSelected?'selected':''}" ${rowStyle} onclick='toggleReportItem(${JSON.stringify({fullName, name:item.name, cat:currentReportAction})})'><td>${item.name}</td><td>${totalQty}</td><td>${(totalQty/daysCount).toFixed(1)}</td><td>${totalTimes}</td><td>${(totalTimes/daysCount).toFixed(1)}</td></tr>`; } }); if(hasItem) html += groupHtml + '</tbody></table>'; } document.getElementById('usage-table-container').innerHTML = html || '<p style="text-align:center; padding:20px;">無數據</p>'; updateUsageChart(); }
         function toggleReportItem(obj) { const idx = globalSelectedItems.findIndex(i => i.fullName === obj.fullName); if(idx > -1) globalSelectedItems.splice(idx,1); else if(globalSelectedItems.length < 5) globalSelectedItems.push(obj); applyUsageFilter(); }
         function updateUsageChart() { const chartEl = document.getElementById('usageChart'); if(!chartEl) return; const ctx = chartEl.getContext('2d'); const s = document.getElementById('rep-s-date').value, e = document.getElementById('rep-e-date').value; let labels = []; for (let d = new Date(s); d <= new Date(e); d.setDate(d.getDate() + 1)) labels.push(d.toISOString().split('T')[0].slice(5)); const datasets = globalSelectedItems.map((item, i) => { const pts = labels.map(l => { let sum = 0; (allRecords[currentUserID]?.[item.name] || []).forEach(r => { if(new Date(r.start).toISOString().split('T')[0].slice(5) === l && r.cat === item.cat) sum += (r.qty || 1); }); return sum; }); return { label: item.fullName, data: pts, borderColor: reportColors[i], backgroundColor: reportColors[i], tension: 0.3, pointRadius: 4 }; }); if(usageChart) usageChart.destroy(); usageChart = new Chart(ctx, { type: 'line', data: { labels, datasets }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } } }); }
@@ -325,289 +399,121 @@
             const myRecs = allRecords[currentUserID] || {}; 
             let totalItemsCount = 0; 
             for(let c in structure) for(let g in structure[c]) totalItemsCount += structure[c][g].length; 
-            
-            const todayStr = new Date().toISOString().split('T')[0];
-            let monthData = []; 
-            let chartDatasets = []; 
-
+            const today = new Date();
+            const todayStr = today.toISOString().split('T')[0];
+            let calendarDays = [];
+            let startDate = new Date();
+            startDate.setDate(today.getDate() - 34);
+            let allLines = [];
             const hourLabels = [];
             for(let h=8; h<=22; h++) hourLabels.push(`${h}:00`);
-            
-            // 計算近 35 日數據
-            for(let i=34; i>=0; i--){ 
-                const d = new Date(); d.setDate(d.getDate() - i); 
-                const dStr = d.toISOString().split('T')[0]; 
-                const fullDateLabel = `${d.getMonth() + 1}/${d.getDate()}`;
-
-                let dayLogs = []; 
-                let dayUniqueItems = new Set(); 
-                let hourlyCounts = new Array(15).fill(0);
-
-                for(let n in myRecs) { 
+            for(let i=0; i<35; i++) {
+                const d = new Date(startDate); d.setDate(startDate.getDate() + i);
+                const dStr = d.toISOString().split('T')[0];
+                const dLabel = `${d.getMonth() + 1}/${d.getDate()}`;
+                let dayLogs = [], dayUniqueItems = new Set(), hourlyCounts = new Array(15).fill(0);
+                for(let n in myRecs) {
                     if(n === 'dailyNotes') continue;
-                    const matched = (myRecs[n] || []).filter(r => new Date(r.start).toISOString().split('T')[0] === dStr); 
-                    if(matched.length > 0) { 
-                        matched.forEach(m => {
-                            dayLogs.push({ ...m, name: n });
-                            const hr = new Date(m.start).getHours();
-                            if(hr >= 8 && hr <= 22) hourlyCounts[hr-8]++;
-                        });
-                        dayUniqueItems.add(n); 
-                    } 
-                } 
-                
-                // 判定該日基準：計算該日之前的 7 日標準差
-                let last7DaysCounts = [];
-                for(let j=1; j<=7; j++) {
-                    let prevD = new Date(dStr); prevD.setDate(prevD.getDate() - j);
-                    let prevDStr = prevD.toISOString().split('T')[0];
-                    let count = 0;
-                    for(let n in myRecs) {
-                        if(n === 'dailyNotes') continue;
-                        count += (myRecs[n] || []).filter(r => new Date(r.start).toISOString().split('T')[0] === prevDStr).length;
-                    }
-                    last7DaysCounts.push(count);
-                }
-                const m7 = last7DaysCounts.reduce((a, b) => a + b, 0) / 7;
-                const s7 = Math.sqrt(last7DaysCounts.map(x => Math.pow(x - m7, 2)).reduce((a, b) => a + b, 0) / 7) || 1;
-
-                // 檢查是否有 5 分鐘內補記 > 10 項
-                let hasBurst = false; 
-                const sorted = dayLogs.sort((a,b) => a.start - b.start); 
-                for(let k=0; k<sorted.length; k++){ 
-                    const burstWindow = sorted.filter(r => r.start >= sorted[k].start && r.start <= sorted[k].start + 300000);
-                    if(new Set(burstWindow.map(r => r.name)).size > 10) { hasBurst = true; break; } 
-                } 
-                
-                // 顏色判定邏輯
-                let statusCls = ""; 
-                if (dStr <= todayStr) {
-                    const diff = Math.abs(dayLogs.length - m7);
-                    // 紅色：補記異常 OR 超過 1.5 倍標準差
-                    if (hasBurst || (dayLogs.length > 0 && diff > (1.5 * s7))) {
-                        statusCls = "day-error"; 
-                    } 
-                    // 黃色：種類不足總數 50%
-                    else if (dayUniqueItems.size < (totalItemsCount * 0.5)) {
-                        statusCls = "day-low"; 
-                    } 
-                    // 綠色：其餘正常
-                    else {
-                        statusCls = "day-stable";
+                    const matched = (myRecs[n] || []).filter(r => new Date(r.start).toISOString().split('T')[0] === dStr);
+                    if(matched.length > 0) {
+                        matched.forEach(m => { dayLogs.push({ ...m, name: n }); const hr = new Date(m.start).getHours(); if(hr >= 8 && hr <= 22) hourlyCounts[hr-8]++; });
+                        dayUniqueItems.add(n);
                     }
                 }
-                
-                monthData.push({ full: dStr, label: fullDateLabel, dayNum: dStr.slice(8), count: dayLogs.length, statusCls }); 
-
-                const isSelected = (selectedStabilityDate === dStr);
-                chartDatasets.push({
-                    label: dStr,
-                    data: hourlyCounts,
-                    borderColor: isSelected ? '#2980b9' : 'rgba(180, 180, 180, 0.4)', 
-                    borderWidth: isSelected ? 2.5 : 1, 
-                    pointRadius: isSelected ? 4 : 0,
-                    pointBackgroundColor: '#2980b9',
-                    tension: 0.3,
-                    order: isSelected ? 0 : 1 
-                });
-            } 
-
+                if (dayLogs.length > 0) {
+                    allLines.push({ label: dStr, data: hourlyCounts, borderColor: dStr === selectedStabilityDate ? '#2980b9' : 'rgba(200, 200, 200, 0.4)', borderWidth: dStr === selectedStabilityDate ? 3 : 1, pointRadius: dStr === selectedStabilityDate ? 4 : 0, tension: 0.3, order: dStr === selectedStabilityDate ? 0 : 1 });
+                }
+                let statusCls = ""; let hasBurst = false; const sorted = dayLogs.sort((a,b) => a.start - b.start);
+                for(let k=0; k<sorted.length; k++){ const window = sorted.filter(r => r.start >= sorted[k].start && r.start <= sorted[k].start + 300000); if(new Set(window.map(r => r.name)).size > 10) { hasBurst = true; break; } }
+                let prev7 = []; for(let j=1; j<=7; j++){ let pd = new Date(dStr); pd.setDate(pd.getDate()-j); let pdStr = pd.toISOString().split('T')[0]; let c = 0; for(let n in myRecs) { if(n !== 'dailyNotes') c += (myRecs[n] || []).filter(r => new Date(r.start).toISOString().split('T')[0] === pdStr).length; } prev7.push(c); }
+                const m7 = prev7.reduce((a,b)=>a+b,0)/7; const s7 = Math.sqrt(prev7.map(x=>Math.pow(x-m7,2)).reduce((a,b)=>a+b,0)/7) || 0.1; const coverage = dayUniqueItems.size / totalItemsCount;
+                if (dStr <= todayStr) { if (hasBurst || Math.abs(dayLogs.length - m7) > (2 * s7) || coverage < 0.3) statusCls = "day-error"; else if (Math.abs(dayLogs.length - m7) > (1.5 * s7) || coverage < 0.5) statusCls = "day-low"; else if (dayLogs.length > 0) statusCls = "day-stable"; }
+                calendarDays.push({ full: dStr, label: dLabel, count: dayLogs.length, statusCls });
+            }
             body.innerHTML = `
                 <div class="report-left">
                     <div class="admin-section">
-                        <h3>⏰ 時段更新頻率 (35日疊加趨勢)</h3>
-                        <div style="height: 250px; margin-bottom: 25px; background: #fff; padding: 10px; border-radius: 12px; border: 1px solid #f1f5f9; box-shadow: inset 0 2px 4px rgba(0,0,0,0.02);">
+                        <h3>⏰ 時段紀錄密度 (近35日對比)</h3>
+                        <div style="height: 220px; margin-bottom: 25px; background: #fff; padding: 10px; border-radius: 12px; border: 1px solid #f1f5f9;">
                             <canvas id="stabilityTrendChart"></canvas>
                         </div>
-                        
-                        <h3>🗓️ 近35日操作趨勢</h3>
-                        <div style="display:flex; gap:10px; font-size:11px; margin-bottom:10px;">
-                            <span>🟢 正常</span><span>🟡 種類不足</span><span>🔴 數據異常 (1.5σ / 補記)</span>
+                        <h3>🗓️ 近35日操作趨勢 (今日：${todayStr})</h3>
+                        <div style="font-size:12px; color:#475569; margin-bottom:10px; padding: 8px; background:#f1f5f9; border-radius:8px; line-height:1.6;">
+                            <b>判斷標準：</b><br>
+                            <span style="color:#065f46;">● 綠色 (穩定)：</span> 正常紀錄且覆蓋率達標<br>
+                            <span style="color:#92400e;">● 黃色 (偏低)：</span> 紀錄數量波動較大或品項覆蓋率低於 50%<br>
+                            <span style="color:#991b1b;">● 紅色 (異常)：</span> 短時間大量補登、紀錄嚴重偏差或覆蓋率低於 30%
                         </div>
                         <div class="stability-grid">
-                            ${monthData.map(d => `<div class="day-cell ${d.statusCls} ${selectedStabilityDate===d.full?'selected-day':''}" onclick="selectStabilityDate('${d.full}')"><b>${d.count}</b><span style="font-size:9px;">${d.label}</span></div>`).join('')}
+                            ${calendarDays.map(d => `<div class="day-cell ${d.statusCls} ${selectedStabilityDate===d.full?'selected-day':''}" onclick="selectStabilityDate('${d.full}')"><b>${d.count}</b><span style="font-size:9px;">${d.label}</span></div>`).join('')}
                         </div>
                     </div>
                 </div>
-                <div class="report-right" id="stability-detail-panel"></div>
-            `; 
-
+                <div class="report-right" id="stability-detail-panel"></div>`; 
             const ctx = document.getElementById('stabilityTrendChart').getContext('2d');
             new Chart(ctx, {
                 type: 'line',
-                data: { labels: hourLabels, datasets: chartDatasets },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    interaction: { mode: 'nearest', intersect: false },
-                    plugins: { 
-                        legend: { display: false },
-                        tooltip: { 
-                            enabled: true,
-                            backgroundColor: 'rgba(44, 62, 80, 0.9)',
-                            callbacks: { label: (ctx) => `日期：${ctx.dataset.label} | 更新：${ctx.raw} 筆` } 
-                        }
-                    },
-                    scales: {
-                        y: { beginAtZero: true, min: 0, max: 20, grid: { color: '#f1f5f9' }, ticks: { stepSize: 5 } },
-                        x: { grid: { display: false } }
-                    }
+                data: { labels: hourLabels, datasets: allLines },
+                options: { 
+                    responsive: true, maintainAspectRatio: false, 
+                    plugins: { legend: { display: false }, tooltip: { filter: (item) => item.dataset.order === 0 } }, 
+                    scales: { y: { beginAtZero: true, min: 0, max: 15, ticks: { stepSize: 5 } } } 
                 }
             });
-
             renderStabilityDetail(selectedStabilityDate); 
         }
 
-        function selectStabilityDate(dStr) { 
-            selectedStabilityDate = dStr; 
-            renderStabilitySection(); 
-        }
+        function selectStabilityDate(dStr) { selectedStabilityDate = dStr; renderStabilitySection(); }
 
         function renderStabilityDetail(dStr) {
             const panel = document.getElementById('stability-detail-panel'); 
             const myRecs = allRecords[currentUserID] || {}; 
-            let logs = []; 
-            let dayUnique = new Set(); 
-            for(let n in myRecs) {
-                if(n === 'dailyNotes') continue;
-                (myRecs[n] || []).forEach(r => { 
-                    if(new Date(r.start).toISOString().split('T')[0] === dStr) { 
-                        logs.push({ name: n, time: r.start, cat: r.cat }); 
-                        dayUnique.add(n); 
-                    } 
-                }); 
-            }
+            let logs = []; let dayUnique = new Set(); 
+            for(let n in myRecs) { if(n === 'dailyNotes') continue; (myRecs[n] || []).forEach(r => { if(new Date(r.start).toISOString().split('T')[0] === dStr) { logs.push({ name: n, time: r.start, cat: r.cat }); dayUnique.add(n); } }); }
             logs.sort((a,b) => a.time - b.time); 
-            
-            let totalItemsCount = 0; 
-            for(let c in structure) for(let g in structure[c]) totalItemsCount += structure[c][g].length; 
-
-            // 計算近 7 日歷史數據獲取標準差
-            let last7 = [];
+            let totalItemsCount = 0; for(let c in structure) for(let g in structure[c]) totalItemsCount += structure[c][g].length; 
+            let prev7Counts = []; let prev7Coverages = [];
             for(let i=1; i<=7; i++) {
-                let td = new Date(dStr); td.setDate(td.getDate()-i);
-                let tStr = td.toISOString().split('T')[0];
-                let c = 0;
-                for(let n in myRecs) { if(n !== 'dailyNotes') c += (myRecs[n] || []).filter(r => new Date(r.start).toISOString().split('T')[0] === tStr).length; }
-                last7.push(c);
+                let td = new Date(dStr); td.setDate(td.getDate()-i); let ts = td.toISOString().split('T')[0]; let c = 0; let u = new Set();
+                for(let n in myRecs) { if(n === 'dailyNotes') continue; const matched = (myRecs[n] || []).filter(r => new Date(r.start).toISOString().split('T')[0] === ts); if(matched.length > 0) { c += matched.length; u.add(n); } }
+                prev7Counts.push(c); prev7Coverages.push(u.size / totalItemsCount);
             }
-            const mean7 = last7.reduce((a, b) => a + b, 0) / 7;
-            const std7 = Math.sqrt(last7.map(x => Math.pow(x - mean7, 2)).reduce((a, b) => a + b, 0) / 7) || 0.1;
-            
-            // 計算今日含概率 (今日筆數落在常態分佈的位置)
-            // 使用累積分佈函數 (CDF) 簡化估計：z = (x - mean) / std
-            const zScore = (logs.length - mean7) / std7;
-            let probability = 0;
-            // 簡單正態概率估算 (0.5 + 0.5 * erf(z/sqrt(2)))
-            if (zScore < -3) probability = 0.1;
-            else if (zScore > 3) probability = 99.9;
-            else probability = (0.5 * (1 + (zScore / Math.sqrt(2)) * (1 - (zScore*zScore)/3))) * 100;
-            if (probability < 0) probability = 0;
-            if (probability > 100) probability = 100;
-
-            let hasBurst = false; 
-            for(let k=0; k<logs.length; k++) { 
-                const burstWindow = logs.filter(r => r.time >= logs[k].time && r.time <= logs[k].time + 300000);
-                if(new Set(burstWindow.map(r => r.name)).size > 10) { hasBurst = true; break; } 
-            } 
-            
-            let adviceList = []; 
-            if(logs.length === 0) {
-                adviceList.push("🔴 今日目前無紀錄。"); 
-            } else {
-                if(hasBurst) adviceList.push("🔴 異常：5分鐘內補記超過10項不同品項。"); 
-                if(Math.abs(logs.length - mean7) > (1.5 * std7)) adviceList.push(`🔴 異常：筆數偏離基準超過1.5σ (基準:${mean7.toFixed(1)}±${(1.5*std7).toFixed(1)})`);
-                if(dayUnique.size < totalItemsCount * 0.5) adviceList.push("🟡 提示：紀錄種類不足總數 50%。"); 
-                if(adviceList.length === 0) adviceList.push("🟢 操作穩定度良好，符合歷史趨勢。");
-            }
-            
-            const savedNote = (allRecords[currentUserID]?.dailyNotes?.[dStr]) || "";
+            const avg7Count = prev7Counts.reduce((a,b)=>a+b,0)/7; const avg7Cov = prev7Coverages.reduce((a,b)=>a+b,0)/7; const currentCov = (dayUnique.size / totalItemsCount);
 
             panel.innerHTML = `
-                <h3>📅 ${dStr} 明細</h3>
+                <h3>📅 ${dStr} 指標分析</h3>
                 <div style="display:flex; gap:10px; margin-bottom:15px;">
                     <div style="flex:1; background:#f8fafc; padding:10px; border-radius:10px; text-align:center; border:1px solid #e2e8f0;">
-                        <div style="font-size:11px; color:#64748b;">今日 / 近7日標準差</div>
-                        <div style="font-size:18px; font-weight:bold;">${logs.length} / ${std7.toFixed(1)}</div>
+                        <div style="font-size:11px; color:#64748b;">當日/近7日筆數</div>
+                        <div style="font-size:18px; font-weight:bold;">${logs.length} <small style="font-size:12px; font-weight:normal; color:#94a3b8;">/ ${avg7Count.toFixed(1)}</small></div>
                     </div>
                     <div style="flex:1; background:#f8fafc; padding:10px; border-radius:10px; text-align:center; border:1px solid #e2e8f0;">
-                        <div style="font-size:11px; color:#64748b;">今日含概率 (%)</div>
-                        <div style="font-size:18px; font-weight:bold;">${probability.toFixed(1)}%</div>
+                        <div style="font-size:11px; color:#64748b;">當日/覆蓋率</div>
+                        <div style="font-size:18px; font-weight:bold;">${(currentCov * 100).toFixed(0)}%</div>
                     </div>
                 </div>
-                <div class="alert-box" style="background:#f1f5f9;"><b>分析建議：</b><br>${adviceList.join('<br>')}</div>
-                
                 <div class="daily-note-area">
-                    <div style="font-size:13px; font-weight:bold; color:#475569; margin-bottom:5px;">📝 當日記事本 (自動儲存)</div>
-                    <textarea id="daily-note-input" class="daily-note-input" placeholder="在此輸入今日操作異常原因或備註..." oninput="saveDailyNote('${dStr}', this.value)">${savedNote}</textarea>
+                    <div style="font-size:13px; font-weight:bold; color:#475569; margin-bottom:5px;">📝 當日備註</div>
+                    <textarea id="daily-note-input" class="daily-note-input" placeholder="說明異常原因..." oninput="saveDailyNote('${dStr}', this.value)">${(allRecords[currentUserID]?.dailyNotes?.[dStr]) || ""}</textarea>
                 </div>
-
-                <div style="flex:1; overflow-y:auto; border-top:1px solid #eee; padding-top:10px; margin-top:15px;">
-                    <table class="stat-table">
-                        ${logs.map(l => `<tr><td width="30%">${new Date(l.time).getHours()}:${new Date(l.time).getMinutes().toString().padStart(2,'0')}</td><td><b>[${categoryMap[l.cat]}]</b> ${l.name}</td></tr>`).join('') || '<tr><td colspan="2" style="text-align:center; color:#ccc; padding:20px;">無數據</td></tr>'}
-                    </table>
+                <div style="margin-top:15px; border-top:1px solid #eee; padding-top:10px; flex: 1; overflow: hidden; display: flex; flex-direction: column;">
+                    <div style="font-size:12px; color:#94a3b8; margin-bottom:5px;">操作流水帳 (可滑動)：</div>
+                    <div style="flex: 1; overflow-y: auto; background: #fcfcfc; border-radius: 8px; border: 1px solid #f1f5f9;">
+                        <table class="stat-table">
+                            ${logs.map(l => `<tr><td width="30%">${new Date(l.time).getHours()}:${new Date(l.time).getMinutes().toString().padStart(2,'0')}</td><td><b>[${categoryMap[l.cat]}]</b> ${l.name}</td></tr>`).join('') || '<tr><td colspan="2" style="text-align:center; color:#ccc; padding:20px;">無明細</td></tr>'}
+                        </table>
+                    </div>
                 </div>`; 
         }
 
-        function saveDailyNote(dStr, text) {
-            if(!allRecords[currentUserID].dailyNotes) allRecords[currentUserID].dailyNotes = {};
-            allRecords[currentUserID].dailyNotes[dStr] = text;
-            clearTimeout(window.saveNoteTimer);
-            window.saveNoteTimer = setTimeout(() => {
-                syncToCloud();
-            }, 1000); 
-        }
+        // --- 其餘功能完全保留 ---
 
+        function saveDailyNote(dStr, text) { if(!allRecords[currentUserID].dailyNotes) allRecords[currentUserID].dailyNotes = {}; allRecords[currentUserID].dailyNotes[dStr] = text; clearTimeout(window.saveNoteTimer); window.saveNoteTimer = setTimeout(() => { syncToCloud(); }, 1000); }
         function showMonitor(btn) { document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); document.getElementById('sub-nav-bar').style.display = 'none'; renderMonitorList(); }
         function renderMonitorList() { const searchVal = document.getElementById('mon-search-input')?.value || ""; document.getElementById('content-display').innerHTML = `<h2>👁️ 全員監控</h2><input type="text" id="mon-search-input" class="input-box" style="width:300px; margin-bottom:15px;" placeholder="搜尋員工名稱..." value="${searchVal}"><div id="mon-list-container"></div>`; document.getElementById('mon-search-input').addEventListener('input', (e) => { updateMonitorUI(e.target.value); }); updateMonitorUI(searchVal); }
         function updateMonitorUI(filter) { const container = document.getElementById('mon-list-container'); container.innerHTML = ""; const now = new Date().getTime(); let users = Object.keys(usersData).map(uid => { let last = 0; if(allRecords[uid]) { for(let f in allRecords[uid]) { if(f === 'dailyNotes') continue; const r = allRecords[uid][f]; if(r.length>0) last = Math.max(last, r[r.length-1].start); } } return { uid, last, name: usersData[uid].name || uid, isLate: (now - last > 86400000 || last === 0) }; }).filter(u => u.name.toLowerCase().includes(filter.toLowerCase())); users.sort((a,b) => b.isLate - a.isLate); users.forEach(u => { const item = document.createElement('div'); item.className = `mon-user-item ${u.isLate ? 'mon-late' : ''}`; item.innerHTML = `<div class="mon-info-left"><b>👤 ${u.name}</b><small style="color:#94a3b8;">最後操作：${u.last ? fmt(u.last) : '無紀錄'}</small></div><div class="mon-status-right">${u.isLate ? '❗ 超過24H未操作' : '✅ 正常'} 〉</div>`; item.onclick = () => { const det = document.getElementById('det-box-' + u.uid); det.style.display = det.style.display === 'block' ? 'none' : 'block'; }; const detBox = document.createElement('div'); detBox.id = 'det-box-' + u.uid; detBox.style.display = 'none'; let content = `<div class="card-container" style="padding:10px; background:#f1f5f9; border-radius:10px;">`; for (let cat in structure) { for (let group in structure[cat]) { structure[cat][group].forEach(item => { const records = allRecords[u.uid]?.[item.name]; if (records && records.length > 0) { const lastRecord = records[records.length - 1]; let cls = "food-item-card active-card" + (lastRecord.expire === 0 ? " scrapped-card" : (lastRecord.expire <= now ? " expired-card" : "")); content += `<div class="${cls}"><div class="food-name">${item.name}</div><div class="time-label">止：${lastRecord.expire === 0 ? '報廢' : fmt(lastRecord.expire)}</div></div>`; } else { content += `<div class="food-item-card untracked-card"><div class="food-name">${item.name}</div><div class="time-label">⚪ 未追蹤</div></div>`; } }); } } detBox.innerHTML = content + `</div>`; container.appendChild(item); container.appendChild(detBox); }); }
-        
         function showAdmin(btn) { document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); renderAdminContent(); }
-        
-        function renderAdminContent() { 
-            const navBar = document.getElementById('sub-nav-bar'); 
-            navBar.style.display = 'flex'; 
-            navBar.innerHTML = ''; 
-            const cats = { purchase: '🚚 進貨', thaw: '❄️ 解凍', open: '📦 開封', process: '🍳 製備' }; 
-            for(let key in cats) { 
-                const btn = document.createElement('button'); 
-                btn.className = 'sub-tab-btn' + (currentAdminTab === key ? ' active' : ''); 
-                btn.innerText = cats[key]; 
-                btn.onclick = () => { currentAdminTab = key; renderAdminContent(); }; 
-                navBar.appendChild(btn); 
-            } 
-            let html = `<h2>⚙️ 管理：${cats[currentAdminTab]}</h2>`; 
-            let groups = Object.keys(structure[currentAdminTab] || {}); 
-            const rule = globalOrderRules[currentAdminTab]; 
-            if (rule) groups.sort((a, b) => (rule.indexOf(a) === -1 ? 99 : rule.indexOf(a)) - (rule.indexOf(b) === -1 ? 99 : rule.indexOf(b))); 
-            
-            groups.forEach(g => { 
-                html += `<div class="admin-section">
-                    <strong>分組：${g}</strong><br>
-                    <div style="display: flex; align-items: center; gap: 15px; margin: 12px 0; flex-wrap: wrap;">
-                        <input id="in-${currentAdminTab}-${g}" class="input-box" style="flex: 2; min-width: 150px;" placeholder="輸入品項名稱">
-                        <div style="display: flex; align-items: center; gap: 5px;">
-                            <input id="tm-${currentAdminTab}-${g}" type="number" class="input-box" style="width: 80px; text-align: center;" placeholder="數值">
-                            <select id="un-${currentAdminTab}-${g}" class="input-box" style="width: 80px;">
-                                <option value="hour">小時</option>
-                                <option value="day">天</option>
-                                <option value="month">月</option>
-                            </select>
-                        </div>
-                        <label style="display: flex; align-items: center; gap: 5px; color: #475569; font-size: 15px; cursor: pointer; padding: 0 5px;">
-                            <input type="checkbox" id="ck-${currentAdminTab}-${g}" style="width: 18px; height: 18px;"> 啟用原廠到期日期
-                        </label>
-                        <button onclick="addItem('${currentAdminTab}','${g}')" style="background:#1abc9c; color:white; border:none; padding:11px 25px; border-radius:10px; cursor:pointer; font-weight: bold; margin-left: auto;">新增品項</button>
-                    </div>
-                    <table class="admin-table">`; 
-                (structure[currentAdminTab][g]||[]).forEach((item, idx) => { 
-                    html += `<tr><td width="55%">${item.name} (${item.time}${item.unit==='hour'?'小時':(item.unit==='day'?'天':'月')})${item.useDate ? ' <span style="color:#10b981; font-weight:bold;"> [原廠日期]</span>' : ''}</td><td><button class="sort-btn" onclick="moveItem('${currentAdminTab}','${g}',${idx},-1)">↑</button><button class="sort-btn" onclick="moveItem('${currentAdminTab}','${g}',${idx},1)">↓</button><button onclick="delItem('${currentAdminTab}','${g}',${idx})" style="color:#ef4444; background:none; border:none; cursor:pointer; font-weight: bold;">刪除</button></td></tr>`; 
-                }); 
-                html += `</table></div>`; 
-            }); 
-            document.getElementById('content-display').innerHTML = html; 
-        }
-
+        function renderAdminContent() { const navBar = document.getElementById('sub-nav-bar'); navBar.style.display = 'flex'; navBar.innerHTML = ''; const cats = { purchase: '🚚 進貨', thaw: '❄️ 解凍', open: '📦 開封', process: '🍳 製備' }; for(let key in cats) { const btn = document.createElement('button'); btn.className = 'sub-tab-btn' + (currentAdminTab === key ? ' active' : ''); btn.innerText = cats[key]; btn.onclick = () => { currentAdminTab = key; renderAdminContent(); }; navBar.appendChild(btn); } let html = `<h2>⚙️ 管理：${cats[currentAdminTab]}</h2>`; let groups = Object.keys(structure[currentAdminTab] || {}); const rule = globalOrderRules[currentAdminTab]; if (rule) groups.sort((a, b) => (rule.indexOf(a) === -1 ? 99 : rule.indexOf(a)) - (rule.indexOf(b) === -1 ? 99 : rule.indexOf(b))); groups.forEach(g => { html += `<div class="admin-section"><strong>分組：${g}</strong><br><div style="display: flex; align-items: center; gap: 15px; margin: 12px 0; flex-wrap: wrap;"><input id="in-${currentAdminTab}-${g}" class="input-box" style="flex: 2; min-width: 150px;" placeholder="輸入品項名稱"><div style="display: flex; align-items: center; gap: 5px;"><input id="tm-${currentAdminTab}-${g}" type="number" class="input-box" style="width: 80px; text-align: center;" placeholder="數值"><select id="un-${currentAdminTab}-${g}" class="input-box" style="width: 80px;"><option value="hour">小時</option><option value="day">天</option><option value="month">月</option></select></div><label style="display: flex; align-items: center; gap: 5px; color: #475569; font-size: 15px; cursor: pointer; padding: 0 5px;"><input type="checkbox" id="ck-${currentAdminTab}-${g}" style="width: 18px; height: 18px;"> 啟用原廠到期日期</label><button onclick="addItem('${currentAdminTab}','${g}')" style="background:#1abc9c; color:white; border:none; padding:11px 25px; border-radius:10px; cursor:pointer; font-weight: bold; margin-left: auto;">新增品項</button></div><table class="admin-table">`; (structure[currentAdminTab][g]||[]).forEach((item, idx) => { html += `<tr><td width="55%">${item.name} (${item.time}${item.unit==='hour'?'小時':(item.unit==='day'?'天':'月')})${item.useDate ? ' <span style="color:#10b981; font-weight:bold;"> [原廠日期]</span>' : ''}</td><td><button class="sort-btn" onclick="moveItem('${currentAdminTab}','${g}',${idx},-1)">↑</button><button class="sort-btn" onclick="moveItem('${currentAdminTab}','${g}',${idx},1)">↓</button><button onclick="delItem('${currentAdminTab}','${g}',${idx})" style="color:#ef4444; background:none; border:none; cursor:pointer; font-weight: bold;">刪除</button></td></tr>`; }); html += `</table></div>`; }); document.getElementById('content-display').innerHTML = html; }
         function moveItem(cat, group, idx, dir) { const list = structure[cat][group]; const target = idx + dir; if (target < 0 || target >= list.length) return; [list[idx], list[target]] = [list[target], list[idx]]; syncToCloud(); }
         function addItem(c,g){ const n=document.getElementById(`in-${c}-${g}`).value, t=document.getElementById(`tm-${c}-${g}`).value, u=document.getElementById(`un-${c}-${g}`).value, d=document.getElementById(`ck-${c}-${g}`).checked; if(!n||!t)return; if(!structure[c]) structure[c] = {}; if(!structure[c][g]) structure[c][g] = []; structure[c][g].push({name:n, time:parseInt(t), unit:u, useDate:d}); syncToCloud(); showToast("已新增品項"); }
         function delItem(c,g,i){ if(confirm('確認刪除？')){ structure[c][g].splice(i,1); syncToCloud(); } }
