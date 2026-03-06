@@ -600,11 +600,11 @@
                 <h3>📅 ${dStr} 分析報告</h3>
                 <div style="display:flex; gap:10px; margin-bottom:15px;">
                     <div style="flex:1; background:#f8fafc; padding:10px; border-radius:10px; text-align:center; border:1px solid #e2e8f0;">
-                        <div style="font-size:11px; color:#64748b;">今日/平均筆數</div>
+                        <div style="font-size:11px; color:#64748b;">今日/近7日平均記錄筆數</div>
                         <div style="font-size:18px; font-weight:bold;">${logs.length} <small style="font-size:12px; font-weight:normal; color:#94a3b8;">/ ${avg7Count.toFixed(1)}</small></div>
                     </div>
                     <div style="flex:1; background:#f8fafc; padding:10px; border-radius:10px; text-align:center; border:1px solid #e2e8f0;">
-                        <div style="font-size:11px; color:#64748b;">今日/平均覆蓋率</div>
+                        <div style="font-size:11px; color:#64748b;">今日/近7日平均覆蓋率</div>
                         <div style="font-size:18px; font-weight:bold;">${(currentCov * 100).toFixed(0)}% <small style="font-size:12px; font-weight:normal; color:#94a3b8;">/ ${(avg7Cov * 100).toFixed(0)}%</small></div>
                     </div>
                 </div>
@@ -630,7 +630,7 @@
                 </div>`; 
         }
 
-        // --- 監控優化版區塊 (修改：嵌入 7 日方格，並自動排序) ---
+        // --- 監控優化版區塊 ---
 
         function showMonitor(btn) { 
             document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active')); 
@@ -801,7 +801,7 @@
             showToast(`正在查看 ${usersData[uid]?.name || uid} 的紀錄報告`);
         }
 
-        // --- 其餘功能完全保留 ---
+        // --- 其餘功能 ---
 
         function saveDailyNote(dStr, text) { if(!allRecords[currentUserID].dailyNotes) allRecords[currentUserID].dailyNotes = {}; allRecords[currentUserID].dailyNotes[dStr] = text; clearTimeout(window.saveNoteTimer); window.saveNoteTimer = setTimeout(() => { syncToCloud(); }, 1000); }
         function showAdmin(btn) { document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); renderAdminContent(); }
