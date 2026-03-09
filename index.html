@@ -248,8 +248,6 @@
         async function printViaBluetooth(text) {
             if (!printerCharacteristic) return;
             try {
-                // 這裡預留轉碼 Big5 邏輯，若未引入庫則使用 TextEncoder (僅支援 UTF-8)
-                // 大多數 MPT-II 需要 Big5 才能印繁中
                 let encoder = new TextEncoder();
                 let data = encoder.encode(text + '\n\n\n');
                 await printerCharacteristic.writeValue(data);
@@ -300,7 +298,6 @@
                     const d = doc.data(); 
                     structure = d.structure || {}; 
                     allRecords = d.records || {}; 
-                    // 載入後備份至 local
                     localStorage.setItem(`bak_${currentStoreDoc}`, JSON.stringify({structure, records: allRecords}));
                     refreshCurrentUI(); 
                 } 
@@ -318,18 +315,12 @@
             else if (act.dataset.cat) showCategory(act.dataset.cat, act, true); 
         }
 
-        // --- 核心資料同步 (優化版) ---
         function syncToCloud() {
-            // 優先更新 LocalStorage
             localStorage.setItem(`bak_${currentStoreDoc}`, JSON.stringify({structure, records: allRecords}));
-            
             if (navigator.onLine) {
-                // 使用局部更新，避免覆蓋他人紀錄
                 const updateData = {};
                 updateData[`records.${currentUserID}`] = allRecords[currentUserID] || [];
-                // structure 變動較少，維持覆蓋
                 updateData[`structure`] = structure;
-
                 db.collection("stores").doc(currentStoreDoc).update(updateData)
                   .catch(err => {
                       console.error("同步失敗，改用 set", err);
@@ -374,8 +365,6 @@
                     <div id="auth-list-container"></div>
                 </div>
             `; 
-
-            // --- 新增：清理按鈕 (僅開發者可見) ---
             if (currentUserRole === 'developer') {
                 html += `
                     <div class="admin-section" style="border: 2px solid #ef4444;">
@@ -385,26 +374,20 @@
                     </div>
                 `;
             }
-
             display.innerHTML = html;
             document.getElementById('auth-search-input').addEventListener('input', (e) => { updateAuthUI(e.target.value); }); 
             updateAuthUI(searchVal); 
         }
 
-        // --- 新增：清理功能邏輯 ---
         function cleanOldRecords() {
             if (!confirm("確認要清理上上個月之前的所有紀錄嗎？\n這將永久移除舊數據以維持系統速度。")) return;
-
             const now = new Date();
-            // 計算上上個月的第一天 (例如現在 3/9，上上個月是 1/1)
             const cutoffDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
             const cutoffTs = cutoffDate.getTime();
-
             let totalDeleted = 0;
             for (let uid in allRecords) {
                 for (let itemName in allRecords[uid]) {
                     if (itemName === 'dailyNotes') {
-                        // 清理當日備註
                         for (let dateStr in allRecords[uid].dailyNotes) {
                             if (new Date(dateStr).getTime() < cutoffTs) {
                                 delete allRecords[uid].dailyNotes[dateStr];
@@ -412,15 +395,12 @@
                             }
                         }
                     } else {
-                        // 清理品項紀錄
                         const beforeCount = allRecords[uid][itemName].length;
                         allRecords[uid][itemName] = allRecords[uid][itemName].filter(r => r.start >= cutoffTs);
                         totalDeleted += (beforeCount - allRecords[uid][itemName].length);
                     }
                 }
             }
-
-            // 同步回 Firestore (使用 set 覆蓋全紀錄，因為異動範圍跨帳號)
             db.collection("stores").doc(currentStoreDoc).set({structure, records: allRecords}, {merge: true})
                 .then(() => {
                     showToast(`清理完成！共移除 ${totalDeleted} 筆舊數據`);
@@ -485,26 +465,37 @@
         function processWithDate(shouldPrint) { const val = document.getElementById('date-picker').value; if(!val) { alert("請選擇原廠到期日期"); return; } const target = new Date(val); target.setHours(23,59,59); const hours = (target - new Date()) / 3600000; if (shouldPrint) { printLabel(currentSelecting.name, target, currentQty); } saveRecord(currentSelecting.name, hours, currentQty); }
         function processScrap() { const now = new Date().getTime(); if(!allRecords[currentUserID]) allRecords[currentUserID] = {}; if(!allRecords[currentUserID][currentSelecting.name]) allRecords[currentUserID][currentSelecting.name] = []; for(let i=0; i<currentQty; i++) { allRecords[currentUserID][currentSelecting.name].push({ start: now, expire: 0, qty: 1, status: 'scrapped', cat: currentCategory }); } syncToCloud(); closeModal(); showToast(`已報廢 ${currentQty} 筆`); }
         function saveRecord(name, h, count) { const now = new Date().getTime(); const expireTime = now + h * 3600000; if(!allRecords[currentUserID]) allRecords[currentUserID] = {}; if(!allRecords[currentUserID][name]) allRecords[currentUserID][name] = []; for(let i=0; i<count; i++) { allRecords[currentUserID][name].push({ start: now, expire: expireTime, qty: 1, cat: currentCategory }); } syncToCloud(); closeModal(); showToast(`已紀錄 ${count} 筆`); }
+        
+        // --- 僅修改此部分的列印內容格式 ---
         function printLabel(itemName, customExpireDate, count) { 
             const now = new Date(); 
             let expDate = new Date(); 
             if (customExpireDate) { expDate = customExpireDate; } else { let ms = currentSelecting.time * (currentSelecting.unit === 'hour' ? 3600000 : (currentSelecting.unit === 'day' ? 86400000 : 2592000000)); expDate = new Date(now.getTime() + ms); } 
             const catName = categoryMap[currentCategory] || ''; 
-            const dateStr = `${now.getFullYear()}/${(now.getMonth()+1).toString().padStart(2,'0')}/${now.getDate().toString().padStart(2,'0')} ${now.getHours()}:${now.getMinutes().toString().padStart(2,'0')}`;
-            const expStr = `${expDate.getFullYear()}/${(expDate.getMonth()+1).toString().padStart(2,'0')}/${expDate.getDate().toString().padStart(2,'0')}`;
             
-            // 視窗列印
+            // 格式化時間：年/月/日/時:分
+            const formatTime = (d) => `${d.getFullYear()}/${(d.getMonth()+1).toString().padStart(2,'0')}/${d.getDate().toString().padStart(2,'0')} ${d.getHours()}:${d.getMinutes().toString().padStart(2,'0')}`;
+            const dateStr = formatTime(now);
+            const expStr = formatTime(expDate);
+            
+            // 視窗列印樣式
             const printWindow = window.open('', '', 'height=300,width=220'); 
-            printWindow.document.write('<html><head><title>Label</title><style>body{font-family:sans-serif; text-align:center; padding:0; margin:0; width:180px; font-size:14px; line-height:1.2;} .line{margin: 3px 0; font-weight:bold;} .date{font-size:18px; font-weight:bold; margin: 2px 0;}</style></head><body>'); 
+            printWindow.document.write('<html><head><title>Label</title><style>body{font-family:sans-serif; text-align:left; padding:0; margin:10px; width:180px; font-size:14px; line-height:1.4;} .label-item{margin-bottom: 2px; font-weight:bold; word-break:break-all;}</style></head><body>'); 
             for(let i=0; i<count; i++) { 
-                printWindow.document.write(`<div style="page-break-after: always; padding-top: 10px;"><div class="line">${catName}</div><div class="line">${itemName}</div><div class="line">${dateStr}</div><div class="line">截止:</div><div class="date">${expStr}</div></div>`); 
-                // 若有藍牙，則同時出單
-                if(printerCharacteristic) printViaBluetooth(`${catName}\n${itemName}\n紀錄:${dateStr}\n截止:${expStr}`);
+                printWindow.document.write(`
+                    <div style="page-break-after: always; padding-bottom: 20px;">
+                        <div class="label-item">${catName}</div>
+                        <div class="label-item">${itemName}</div>
+                        <div class="label-item">操作時間 ${dateStr}</div>
+                        <div class="label-item">有效日期 ${expStr}</div>
+                    </div>`); 
+                if(printerCharacteristic) printViaBluetooth(`${catName}\n${itemName}\n操作時間 ${dateStr}\n有效日期 ${expStr}`);
             } 
             printWindow.document.write('</body></html>'); 
             printWindow.document.close(); 
             setTimeout(() => { printWindow.print(); printWindow.close(); }, 300); 
         }
+
         function renderSummary(btn) { document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); document.getElementById('sub-nav-bar').style.display = 'none'; const display = document.getElementById('content-display'); const now = new Date().getTime(); let html = `<h2>📊 我的操作總覽</h2>`; const cats = { purchase: '進貨', thaw: '解凍', open: '開封', process: '製備' }; for(let k in cats) { html += `<div style="background:#fff; padding:10px; border-radius:10px; margin-top:15px; font-weight:bold; border-bottom: 2px solid #e2e8f0;">${k==='purchase'?'🚚':k==='thaw'?'❄️':k==='open'?'📦':'🍳'} ${cats[k]}</div><div class="card-container" style="margin-top:10px;">`; for(let g in structure[k]) { (structure[k][g] || []).forEach(item => { const recs = allRecords[currentUserID]?.[item.name], rec = (recs && recs.length > 0) ? recs[recs.length-1] : null; let cls = "food-item-card" + (rec ? " active-card" : ""); let timeLabel = rec ? fmt(rec.expire) : "--/-- --:--"; if (rec) { if (rec.expire === 0 || rec.status === 'scrapped') { cls += " scrapped-card"; timeLabel = "品項已報廢"; } else if (rec.expire <= now) { cls += " expired-card"; } else if (rec.expire - now <= 86400000) { cls += " warning-card"; } } html += `<div class="${cls}" onclick="openDetail('${item.name}','${currentUserID}')"><div class="food-name">${item.name}</div><div class="time-label">止：${timeLabel}</div><div class="card-ops" onclick="event.stopPropagation()">${rec ? `<button class="mini-op-btn btn-undo" onclick="undo('${item.name}')">復</button><button class="mini-op-btn btn-del" onclick="delRec('${item.name}')">清</button>` : ""}</div></div>`; }); } html += `</div>`; } display.innerHTML = html; }
         
         function showReport(btn) { document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); const navBar = document.getElementById('sub-nav-bar'); navBar.style.display = 'flex'; renderReportNav(); renderReportContent(); }
