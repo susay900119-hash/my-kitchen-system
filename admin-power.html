@@ -2,32 +2,33 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>管理員-一鍵開通</title>
+    <title>管理員-超級控制台</title>
     <script src="https://www.gstatic.com/firebasejs/9.15.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore-compat.js"></script>
     <style>
-        body { font-family: sans-serif; background: #f0f2f5; display: flex; justify-content: center; padding: 20px; }
-        .card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); width: 100%; max-width: 350px; }
-        input { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 6px; box-sizing: border-box; font-size: 16px; }
-        button { width: 100%; padding: 12px; background: #1abc9c; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold; margin-top: 10px; }
-        #status { margin-top: 20px; font-size: 14px; text-align: center; color: #666; font-weight: bold; }
+        body { font-family: sans-serif; background: #eef2f3; display: flex; justify-content: center; padding: 40px; }
+        .box { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 5px 20px rgba(0,0,0,0.1); width: 320px; }
+        input, select { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; }
+        button { width: 100%; padding: 15px; background: #2ecc71; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 16px; }
+        button:hover { background: #27ae60; }
+        #log { margin-top: 15px; font-size: 13px; color: #555; line-height: 1.6; }
     </style>
 </head>
 <body>
-
-<div class="card">
-    <h2 style="text-align: center; margin-top: 0;">🚀 一鍵開通新帳號</h2>
-    <p style="font-size: 14px; color: #666;">請填寫以下資訊：</p>
-    <input type="text" id="uId" placeholder="新帳號 (例如: UserA)">
-    <input type="text" id="uPw" placeholder="新密碼 (例如: 123456)">
-    <input type="text" id="sId" placeholder="店名 ID (例如: Store_01)">
-    <button onclick="magicStart()">立刻開通並裝潢</button>
-    <div id="status">系統就緒</div>
-</div>
+    <div class="box">
+        <h2 style="text-align:center; color:#2c3e50;">🚀 系統開通工具</h2>
+        <input type="text" id="uId" placeholder="設定登入帳號">
+        <input type="text" id="uPw" placeholder="設定登入密碼">
+        <input type="text" id="sId" placeholder="店面編號 (如: Store_01)">
+        <select id="uRole">
+            <option value="admin">管理員 (可改價、看報表)</option>
+            <option value="staff">一般員工 (僅點餐操作)</option>
+        </select>
+        <button onclick="deploySystem()">立刻同步資料並開通</button>
+        <div id="log">系統狀態：等待指令...</div>
+    </div>
 
 <script>
-    // 這裡已經填好你的專屬 API 金鑰了，直接用就可以！
     const firebaseConfig = { 
         apiKey: "AIzaSyAjW3zo1pzJawQEMTvKKAA7AzKZp_EnL3U", 
         authDomain: "mykitchen-8d01c.firebaseapp.com", 
@@ -36,45 +37,41 @@
         messagingSenderId: "4806148029", 
         appId: "1:4806148029:web:1201e8cc679c04430b9cd4" 
     };
-
     firebase.initializeApp(firebaseConfig);
     const db = firebase.firestore();
 
-    async function magicStart() {
+    async function deploySystem() {
         const id = document.getElementById('uId').value;
         const pw = document.getElementById('uPw').value;
         const sid = document.getElementById('sId').value;
-        const status = document.getElementById('status');
+        const role = document.getElementById('uRole').value;
+        const log = document.getElementById('log');
 
-        if(!id || !pw || !sid) return alert("請填寫所有欄位！");
+        if(!id || !pw || !sid) return alert("全部欄位都要填喔！");
 
         try {
-            status.innerText = "⏳ 正在開通帳號...";
-            status.style.color = "blue";
-
-            // 1. 在 config/users 建立帳號
+            log.innerText = "⏳ 步驟 1: 正在寫入帳號金庫...";
             await db.collection('config').doc('users').set({
-                [id]: { name: id, pw: pw, role: 'admin', targetStore: sid }
+                [id]: { name: id, pw: pw, role: role, targetStore: sid }
             }, { merge: true });
 
-            status.innerText = "⏳ 正在初始化店面裝潢...";
-
-            // 2. 從 template_store 複製裝潢到新店面
+            log.innerText = "⏳ 步驟 2: 正在搬運選單裝潢資料...";
             const seed = await db.collection('template_store').doc('menu').get();
-            if(seed.exists()){
+            
+            if (seed.exists()) {
                 await db.collection('stores').doc(sid).set({
                     structure: seed.data()
                 }, { merge: true });
+                log.style.color = "green";
+                log.innerText = "✅ 完工！現在這帳號登入後就有按鈕可以按了！";
+                alert("開通完成！快去測試登入吧！");
+            } else {
+                log.style.color = "orange";
+                log.innerText = "⚠️ 帳號開了，但資料庫裡找不到 template_store/menu 範本，所以進去會是空的！";
             }
-
-            status.style.color = "green";
-            status.innerText = "✅ 成功！帳號已開通且店面已初始化。";
-            alert("開通成功！新帳號 " + id + " 現在可以登入了。");
         } catch (e) {
-            console.error(e);
-            status.style.color = "red";
-            status.innerText = "❌ 失敗，請確認你的 Firebase 權限。";
-            alert("操作失敗，錯誤訊息：" + e.message);
+            log.style.color = "red";
+            log.innerText = "❌ 失敗：" + e.message;
         }
     }
 </script>
