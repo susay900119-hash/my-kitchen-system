@@ -51,7 +51,6 @@
         .action-btn { width: 100%; padding: 16px; margin: 0; border-radius: 12px; border: none; font-size: 18px; font-weight: bold; cursor: pointer; transition: all 0.2s; }
         .btn-cancel { background: #fee2e2 !important; color: #ef4444 !important; }
         
-        /* 監控優化相關樣式 */
         .mon-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 15px; }
         .mon-user-card { background: white; border-radius: 16px; border: 1px solid #e2e8f0; padding: 18px; transition: 0.3s; cursor: pointer; position: relative; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }
         .mon-user-card:hover { transform: translateY(-3px); box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); border-color: #3498db; }
@@ -130,9 +129,9 @@
     </div>
 
     <div id="right-container">
-        <div id="printer-status" class="printer-status" onclick="showAuth(document.getElementById('auth-nav-btn'))">
+        <div id="printer-status" class="printer-status" onclick="connectBluefy()">
             <div id="status-light" class="status-light disconnected"></div>
-            <span id="status-text">連線檢查中...</span>
+            <span id="status-text">點擊連接藍牙出單機</span>
         </div>
         <div id="sub-nav-bar"></div>
         <div id="main-content"><div id="content-display"></div></div>
@@ -196,6 +195,7 @@
         const db = firebase.firestore();
         let usersData = {}, currentStoreDoc = "Dadun", currentUserID = "", currentUserRole = "", structure = {}, allRecords = {}, currentSelecting = null, currentCategory = '', currentAdminTab = 'purchase';
         let currentQty = 1;
+        let bluetoothDevice = null, printerCharacteristic = null;
         
         let currentReportMode = 'usage'; 
         let currentReportAction = 'purchase'; 
@@ -208,6 +208,62 @@
         const globalOrderRules = { purchase: ["基底", "配菜", "配料", "其他"], thaw: ["配菜", "蛋白質", "其他"], open: ["基底", "醬料", "配料", "飲料", "湯", "其他"], process: ["基底", "配菜", "蛋白質", "醬料", "配料", "湯品", "飲料", "其他"] };
         const categoryMap = { purchase: '進貨', thaw: '解凍', open: '開封', process: '製備' };
 
+        // --- 藍牙 Bluefy 連接與出單 ---
+        async function connectBluefy() {
+            try {
+                const light = document.getElementById('status-light');
+                const text = document.getElementById('status-text');
+                text.innerText = '正在尋找藍牙設備...';
+                
+                bluetoothDevice = await navigator.bluetooth.requestDevice({
+                    acceptAllDevices: true,
+                    optionalServices: ['000018f0-0000-1000-8000-00805f9b34fb', '49535441-522d-5052-494e-544552534552']
+                });
+                
+                const server = await bluetoothDevice.gatt.connect();
+                const services = await server.getPrimaryServices();
+                
+                for (let service of services) {
+                    const characteristics = await service.getCharacteristics();
+                    for (let char of characteristics) {
+                        if (char.properties.write || char.properties.writeWithoutResponse) {
+                            printerCharacteristic = char;
+                            break;
+                        }
+                    }
+                    if (printerCharacteristic) break;
+                }
+                
+                if (printerCharacteristic) {
+                    light.className = 'status-light connected';
+                    text.innerText = '藍牙出單機已連線';
+                    showToast('出單機連接成功');
+                }
+            } catch (err) {
+                console.error(err);
+                showToast('藍牙連線失敗: ' + err.message);
+            }
+        }
+
+        async function printViaBluetooth(text) {
+            if (!printerCharacteristic) return;
+            try {
+                // 這裡預留轉碼 Big5 邏輯，若未引入庫則使用 TextEncoder (僅支援 UTF-8)
+                // 大多數 MPT-II 需要 Big5 才能印繁中
+                let encoder = new TextEncoder();
+                let data = encoder.encode(text + '\n\n\n');
+                await printerCharacteristic.writeValue(data);
+            } catch (err) {
+                console.error('列印失敗', err);
+            }
+        }
+
+        // --- 離線同步邏輯 ---
+        window.addEventListener('online', () => {
+            showToast('網路已恢復，正在同步資料...');
+            syncToCloud();
+        });
+
         function checkLogin() { 
             const u = document.getElementById('store-user').value, 
                   p = document.getElementById('store-pw').value; 
@@ -219,7 +275,6 @@
                     currentStoreDoc = usersData[u].targetStore || "Dadun"; 
                     document.getElementById('login-overlay').style.display = 'none'; 
                     
-                    // 權限判斷
                     if (currentUserRole === 'admin' || currentUserRole === 'developer') { 
                         document.getElementById('admin-nav-btn').style.display = 'block'; 
                         document.getElementById('monitor-nav-btn').style.display = 'block';
@@ -230,7 +285,6 @@
 
                     loadStoreData(); 
                     renderSummary(document.getElementById('summary-nav-btn')); 
-                    checkPrinterStatus(usersData[u].printerIP); 
                 } else { 
                     alert("帳號或密碼錯誤"); 
                 } 
@@ -239,8 +293,19 @@
 
         function setQty(q, btn) { currentQty = q; document.querySelectorAll('.qty-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); document.getElementById('qty-input').value = ''; }
         function clearQtyBtns() { document.querySelectorAll('.qty-btn').forEach(b => b.classList.remove('active')); currentQty = parseInt(document.getElementById('qty-input').value) || 1; }
-        function checkPrinterStatus(ip) { const light = document.getElementById('status-light'); const text = document.getElementById('status-text'); if (!ip || ip.length < 5) { light.className = 'status-light disconnected'; text.innerText = '未設定出單機'; return; } text.innerText = '檢查中...'; setTimeout(() => { if (Math.random() > 0.1) { light.className = 'status-light connected'; text.innerText = '出單機連線中'; } else { light.className = 'status-light disconnected'; text.innerText = '出單機斷線'; } }, 1500); }
-        function loadStoreData() { db.collection("stores").doc(currentStoreDoc).onSnapshot((doc) => { if (doc.exists) { const d = doc.data(); structure = d.structure || {}; allRecords = d.records || {}; refreshCurrentUI(); } }); }
+        
+        function loadStoreData() { 
+            db.collection("stores").doc(currentStoreDoc).onSnapshot((doc) => { 
+                if (doc.exists) { 
+                    const d = doc.data(); 
+                    structure = d.structure || {}; 
+                    allRecords = d.records || {}; 
+                    // 載入後備份至 local
+                    localStorage.setItem(`bak_${currentStoreDoc}`, JSON.stringify({structure, records: allRecords}));
+                    refreshCurrentUI(); 
+                } 
+            }); 
+        }
         
         function refreshCurrentUI() { 
             const act = document.querySelector('.menu-btn.active'); 
@@ -251,6 +316,28 @@
             else if (act.id === 'auth-nav-btn') renderAuth(); 
             else if (act.id === 'report-nav-btn') renderReportContent(); 
             else if (act.dataset.cat) showCategory(act.dataset.cat, act, true); 
+        }
+
+        // --- 核心資料同步 (優化版) ---
+        function syncToCloud() {
+            // 優先更新 LocalStorage
+            localStorage.setItem(`bak_${currentStoreDoc}`, JSON.stringify({structure, records: allRecords}));
+            
+            if (navigator.onLine) {
+                // 使用局部更新，避免覆蓋他人紀錄
+                const updateData = {};
+                updateData[`records.${currentUserID}`] = allRecords[currentUserID] || [];
+                // structure 變動較少，維持覆蓋
+                updateData[`structure`] = structure;
+
+                db.collection("stores").doc(currentStoreDoc).update(updateData)
+                  .catch(err => {
+                      console.error("同步失敗，改用 set", err);
+                      db.collection("stores").doc(currentStoreDoc).set({structure, records:allRecords}, {merge: true});
+                  });
+            } else {
+                showToast("目前處於離線狀態，資料已存於本地，連線後自動同步");
+            }
         }
 
         function showAuth(btn) { 
@@ -344,339 +431,56 @@
         function processWithDate(shouldPrint) { const val = document.getElementById('date-picker').value; if(!val) { alert("請選擇原廠到期日期"); return; } const target = new Date(val); target.setHours(23,59,59); const hours = (target - new Date()) / 3600000; if (shouldPrint) { printLabel(currentSelecting.name, target, currentQty); } saveRecord(currentSelecting.name, hours, currentQty); }
         function processScrap() { const now = new Date().getTime(); if(!allRecords[currentUserID]) allRecords[currentUserID] = {}; if(!allRecords[currentUserID][currentSelecting.name]) allRecords[currentUserID][currentSelecting.name] = []; for(let i=0; i<currentQty; i++) { allRecords[currentUserID][currentSelecting.name].push({ start: now, expire: 0, qty: 1, status: 'scrapped', cat: currentCategory }); } syncToCloud(); closeModal(); showToast(`已報廢 ${currentQty} 筆`); }
         function saveRecord(name, h, count) { const now = new Date().getTime(); const expireTime = now + h * 3600000; if(!allRecords[currentUserID]) allRecords[currentUserID] = {}; if(!allRecords[currentUserID][name]) allRecords[currentUserID][name] = []; for(let i=0; i<count; i++) { allRecords[currentUserID][name].push({ start: now, expire: expireTime, qty: 1, cat: currentCategory }); } syncToCloud(); closeModal(); showToast(`已紀錄 ${count} 筆`); }
-        function printLabel(itemName, customExpireDate, count) { const printWindow = window.open('', '', 'height=300,width=220'); const now = new Date(); let expDate = new Date(); if (customExpireDate) { expDate = customExpireDate; } else { let ms = currentSelecting.time * (currentSelecting.unit === 'hour' ? 3600000 : (currentSelecting.unit === 'day' ? 86400000 : 2592000000)); expDate = new Date(now.getTime() + ms); } const catName = categoryMap[currentCategory] || ''; printWindow.document.write('<html><head><title>Label</title><style>body{font-family:sans-serif; text-align:center; padding:0; margin:0; width:180px; font-size:14px; line-height:1.2;} .line{margin: 3px 0; font-weight:bold;} .date{font-size:18px; font-weight:bold; margin: 2px 0;}</style></head><body>'); for(let i=0; i<count; i++) { printWindow.document.write('<div style="page-break-after: always; padding-top: 10px;">'); printWindow.document.write('<div class="line">' + catName + '</div>'); printWindow.document.write('<div class="line">' + itemName + '</div>'); printWindow.document.write('<div class="line">' + now.getFullYear() + '/' + (now.getMonth()+1).toString().padStart(2,'0') + '/' + now.getDate().toString().padStart(2,'0') + ' ' + now.getHours() + ':' + now.getMinutes().toString().padStart(2,'0') + '</div>'); printWindow.document.write('<div class="line">截止:</div>'); printWindow.document.write('<div class="date">' + expDate.getFullYear() + '/' + (expDate.getMonth()+1).toString().padStart(2,'0') + '/' + expDate.getDate().toString().padStart(2,'0') + '</div>'); printWindow.document.write('</div>'); } printWindow.document.write('</body></html>'); printWindow.document.close(); setTimeout(() => { printWindow.print(); printWindow.close(); }, 300); }
+        function printLabel(itemName, customExpireDate, count) { 
+            const now = new Date(); 
+            let expDate = new Date(); 
+            if (customExpireDate) { expDate = customExpireDate; } else { let ms = currentSelecting.time * (currentSelecting.unit === 'hour' ? 3600000 : (currentSelecting.unit === 'day' ? 86400000 : 2592000000)); expDate = new Date(now.getTime() + ms); } 
+            const catName = categoryMap[currentCategory] || ''; 
+            const dateStr = `${now.getFullYear()}/${(now.getMonth()+1).toString().padStart(2,'0')}/${now.getDate().toString().padStart(2,'0')} ${now.getHours()}:${now.getMinutes().toString().padStart(2,'0')}`;
+            const expStr = `${expDate.getFullYear()}/${(expDate.getMonth()+1).toString().padStart(2,'0')}/${expDate.getDate().toString().padStart(2,'0')}`;
+            
+            // 視窗列印
+            const printWindow = window.open('', '', 'height=300,width=220'); 
+            printWindow.document.write('<html><head><title>Label</title><style>body{font-family:sans-serif; text-align:center; padding:0; margin:0; width:180px; font-size:14px; line-height:1.2;} .line{margin: 3px 0; font-weight:bold;} .date{font-size:18px; font-weight:bold; margin: 2px 0;}</style></head><body>'); 
+            for(let i=0; i<count; i++) { 
+                printWindow.document.write(`<div style="page-break-after: always; padding-top: 10px;"><div class="line">${catName}</div><div class="line">${itemName}</div><div class="line">${dateStr}</div><div class="line">截止:</div><div class="date">${expStr}</div></div>`); 
+                // 若有藍牙，則同時出單
+                if(printerCharacteristic) printViaBluetooth(`${catName}\n${itemName}\n紀錄:${dateStr}\n截止:${expStr}`);
+            } 
+            printWindow.document.write('</body></html>'); 
+            printWindow.document.close(); 
+            setTimeout(() => { printWindow.print(); printWindow.close(); }, 300); 
+        }
         function renderSummary(btn) { document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); document.getElementById('sub-nav-bar').style.display = 'none'; const display = document.getElementById('content-display'); const now = new Date().getTime(); let html = `<h2>📊 我的操作總覽</h2>`; const cats = { purchase: '進貨', thaw: '解凍', open: '開封', process: '製備' }; for(let k in cats) { html += `<div style="background:#fff; padding:10px; border-radius:10px; margin-top:15px; font-weight:bold; border-bottom: 2px solid #e2e8f0;">${k==='purchase'?'🚚':k==='thaw'?'❄️':k==='open'?'📦':'🍳'} ${cats[k]}</div><div class="card-container" style="margin-top:10px;">`; for(let g in structure[k]) { (structure[k][g] || []).forEach(item => { const recs = allRecords[currentUserID]?.[item.name], rec = (recs && recs.length > 0) ? recs[recs.length-1] : null; let cls = "food-item-card" + (rec ? " active-card" : ""); let timeLabel = rec ? fmt(rec.expire) : "--/-- --:--"; if (rec) { if (rec.expire === 0 || rec.status === 'scrapped') { cls += " scrapped-card"; timeLabel = "品項已報廢"; } else if (rec.expire <= now) { cls += " expired-card"; } else if (rec.expire - now <= 86400000) { cls += " warning-card"; } } html += `<div class="${cls}" onclick="openDetail('${item.name}','${currentUserID}')"><div class="food-name">${item.name}</div><div class="time-label">止：${timeLabel}</div><div class="card-ops" onclick="event.stopPropagation()">${rec ? `<button class="mini-op-btn btn-undo" onclick="undo('${item.name}')">復</button><button class="mini-op-btn btn-del" onclick="delRec('${item.name}')">清</button>` : ""}</div></div>`; }); } html += `</div>`; } display.innerHTML = html; }
         
-        // --- 紀錄報告部分 ---
-
-        function showReport(btn) { 
-            document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active')); 
-            btn.classList.add('active'); 
-            const navBar = document.getElementById('sub-nav-bar'); 
-            navBar.style.display = 'flex'; 
-            renderReportNav();
-            renderReportContent(); 
-        }
-
-        function renderReportNav() {
-            const navBar = document.getElementById('sub-nav-bar');
-            navBar.innerHTML = `
-                <button class="sub-tab-btn ${currentReportMode==='usage'?'active':''}" onclick="currentReportMode='usage'; renderReportNav(); renderReportContent();">📈 用量分析</button>
-                <button class="sub-tab-btn ${currentReportMode==='stability'?'active':''}" onclick="currentReportMode='stability'; renderReportNav(); renderReportContent();">⚙️ 操作穩定度</button>
-            `;
-        }
-
-        function renderReportContent() { 
-            const display = document.getElementById('content-display'); 
-            display.innerHTML = `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;"><h2>${currentReportMode==='usage'?'📈 用量分析':'⚙️ 操作穩定度'} (${usersData[currentUserID]?.name || currentUserID})</h2></div><div id="report-main-body" class="report-layout"></div>`; 
-            if (currentReportMode === 'usage') renderUsageSection(); 
-            else renderStabilitySection(); 
-        }
-
-        function renderUsageSection() { 
-            const body = document.getElementById('report-main-body'); 
-            const todayStr = new Date().toISOString().split('T')[0]; 
-            const actions = { purchase: '🚚 進貨', thaw: '❄️ 解凍', open: '📦 開封', process: '🍳 製備' }; 
-            body.innerHTML = `
-                <div class="report-left">
-                    <div class="admin-section" style="padding:15px; margin-bottom:15px;">
-                        <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
-                            <input type="date" id="rep-s-date" class="input-box" value="${window.repStartDate || todayStr}" onchange="applyUsageFilter()"> 至 
-                            <input type="date" id="rep-e-date" class="input-box" value="${window.repEndDate || todayStr}" onchange="applyUsageFilter()">
-                            <input type="text" id="rep-search" class="input-box" placeholder="🔍 搜尋品名" style="flex:1;" oninput="applyUsageFilter()">
-                            <button onclick="downloadUsageExcel()" style="background:#27ae60; color:white; border:none; padding:10px 15px; border-radius:8px; cursor:pointer; font-weight:bold;">📥 下載區間紀錄 (.xlsx)</button>
-                        </div>
-                        <div style="display:flex; gap:8px;">
-                            ${Object.entries(actions).map(([k, v]) => `<button class="sub-tab-btn ${currentReportAction===k?'active':''}" style="flex:1; font-size:13px;" onclick="currentReportAction='${k}'; renderUsageSection();">${v}</button>`).join('')}
-                        </div>
-                    </div>
-                    <div id="usage-table-container"></div>
-                </div>
-                <div class="report-right">
-                    <h3 style="margin:0;">趨勢比對 (最多5項)</h3>
-                    <div style="margin: 10px 0; font-size: 12px; color: #94a3b8;">* 點選左側品項以同步顏色並加入比對</div>
-                    <div class="chart-container" style="flex:1; position:relative;"><canvas id="usageChart"></canvas></div>
-                </div>`; 
-            applyUsageFilter(); 
-        }
-
-        function downloadUsageExcel() {
-            const s = document.getElementById('rep-s-date').value, e = document.getElementById('rep-e-date').value;
-            const startTs = new Date(s + " 00:00:00").getTime(), endTs = new Date(e + " 23:59:59").getTime();
-            const myRecs = allRecords[currentUserID] || {};
-            let excelData = [["日期時間", "類別", "品項名稱", "數量", "狀態"]];
-            
-            for(let name in myRecs) {
-                if(name === 'dailyNotes') continue;
-                myRecs[name].forEach(r => {
-                    if(r.start >= startTs && r.start <= endTs) {
-                        const d = new Date(r.start);
-                        const dateStr = `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()} ${d.getHours()}:${d.getMinutes().toString().padStart(2,'0')}`;
-                        excelData.push([
-                            dateStr,
-                            categoryMap[r.cat] || r.cat,
-                            name,
-                            r.qty || 1,
-                            r.status === 'scrapped' ? '報廢' : '正常'
-                        ]);
-                    }
-                });
-            }
-            if(excelData.length === 1) { alert("此區間無紀錄可匯出"); return; }
-            const wb = XLSX.utils.book_new();
-            const ws = XLSX.utils.aoa_to_sheet(excelData);
-            XLSX.utils.book_append_sheet(wb, ws, "用量分析紀錄");
-            XLSX.writeFile(wb, `用量紀錄_${s}_至_${e}.xlsx`);
-        }
-
+        function showReport(btn) { document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); const navBar = document.getElementById('sub-nav-bar'); navBar.style.display = 'flex'; renderReportNav(); renderReportContent(); }
+        function renderReportNav() { const navBar = document.getElementById('sub-nav-bar'); navBar.innerHTML = `<button class="sub-tab-btn ${currentReportMode==='usage'?'active':''}" onclick="currentReportMode='usage'; renderReportNav(); renderReportContent();">📈 用量分析</button><button class="sub-tab-btn ${currentReportMode==='stability'?'active':''}" onclick="currentReportMode='stability'; renderReportNav(); renderReportContent();">⚙️ 操作穩定度</button>`; }
+        function renderReportContent() { const display = document.getElementById('content-display'); display.innerHTML = `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;"><h2>${currentReportMode==='usage'?'📈 用量分析':'⚙️ 操作穩定度'} (${usersData[currentUserID]?.name || currentUserID})</h2></div><div id="report-main-body" class="report-layout"></div>`; if (currentReportMode === 'usage') renderUsageSection(); else renderStabilitySection(); }
+        function renderUsageSection() { const body = document.getElementById('report-main-body'); const todayStr = new Date().toISOString().split('T')[0]; const actions = { purchase: '🚚 進貨', thaw: '❄️ 解凍', open: '📦 開封', process: '🍳 製備' }; body.innerHTML = `<div class="report-left"><div class="admin-section" style="padding:15px; margin-bottom:15px;"><div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;"><input type="date" id="rep-s-date" class="input-box" value="${window.repStartDate || todayStr}" onchange="applyUsageFilter()"> 至 <input type="date" id="rep-e-date" class="input-box" value="${window.repEndDate || todayStr}" onchange="applyUsageFilter()"><input type="text" id="rep-search" class="input-box" placeholder="🔍 搜尋品名" style="flex:1;" oninput="applyUsageFilter()"><button onclick="downloadUsageExcel()" style="background:#27ae60; color:white; border:none; padding:10px 15px; border-radius:8px; cursor:pointer; font-weight:bold;">📥 下載區間紀錄 (.xlsx)</button></div><div style="display:flex; gap:8px;">${Object.entries(actions).map(([k, v]) => `<button class="sub-tab-btn ${currentReportAction===k?'active':''}" style="flex:1; font-size:13px;" onclick="currentReportAction='${k}'; renderUsageSection();">${v}</button>`).join('')}</div></div><div id="usage-table-container"></div></div><div class="report-right"><h3 style="margin:0;">趨勢比對 (最多5項)</h3><div style="margin: 10px 0; font-size: 12px; color: #94a3b8;">* 點選左側品項以同步顏色並加入比對</div><div class="chart-container" style="flex:1; position:relative;"><canvas id="usageChart"></canvas></div></div>`; applyUsageFilter(); }
+        function downloadUsageExcel() { const s = document.getElementById('rep-s-date').value, e = document.getElementById('rep-e-date').value; const startTs = new Date(s + " 00:00:00").getTime(), endTs = new Date(e + " 23:59:59").getTime(); const myRecs = allRecords[currentUserID] || {}; let excelData = [["日期時間", "類別", "品項名稱", "數量", "狀態"]]; for(let name in myRecs) { if(name === 'dailyNotes') continue; myRecs[name].forEach(r => { if(r.start >= startTs && r.start <= endTs) { const d = new Date(r.start); const dateStr = `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()} ${d.getHours()}:${d.getMinutes().toString().padStart(2,'0')}`; excelData.push([dateStr, categoryMap[r.cat] || r.cat, name, r.qty || 1, r.status === 'scrapped' ? '報廢' : '正常']); } }); } if(excelData.length === 1) { alert("此區間無紀錄可匯出"); return; } const wb = XLSX.utils.book_new(); const ws = XLSX.utils.aoa_to_sheet(excelData); XLSX.utils.book_append_sheet(wb, ws, "用量分析紀錄"); XLSX.writeFile(wb, `用量紀錄_${s}_至_${e}.xlsx`); }
         function applyUsageFilter() { const s = document.getElementById('rep-s-date').value, e = document.getElementById('rep-e-date').value; const searchTxt = document.getElementById('rep-search').value.toLowerCase(); window.repStartDate = s; window.repEndDate = e; const startTs = new Date(s + " 00:00:00").getTime(), endTs = new Date(e + " 23:59:59").getTime(); const daysCount = Math.max(1, Math.ceil((endTs - startTs) / (24*3600*1000))); const myRecs = allRecords[currentUserID] || {}; let html = ''; const catGroups = structure[currentReportAction] || {}; for(let groupName in catGroups) { let groupHtml = `<div class="report-group-header">📍 ${groupName}</div><table class="stat-table"><thead><tr><th>品項</th><th>總份數</th><th>日均份</th><th>總次數</th><th>日均次</th></tr></thead><tbody>`; let hasItem = false; catGroups[groupName].forEach(item => { if(searchTxt && !item.name.toLowerCase().includes(searchTxt)) return; const recs = (myRecs[item.name] || []).filter(r => r.cat === currentReportAction && r.start >= startTs && r.start <= endTs && r.status !== 'scrapped'); const totalQty = recs.reduce((sum, r) => sum + (r.qty || 1), 0); const totalTimes = recs.length; if (totalTimes > 0 || searchTxt) { hasItem = true; const fullName = `[${categoryMap[currentReportAction]}] ${item.name}`; const selectIdx = globalSelectedItems.findIndex(i => i.fullName === fullName); const isSelected = selectIdx > -1; const rowStyle = isSelected ? `style="background-color: ${reportColors[selectIdx]}; color: white;"` : ""; groupHtml += `<tr class="${isSelected?'selected':''}" ${rowStyle} onclick='toggleReportItem(${JSON.stringify({fullName, name:item.name, cat:currentReportAction})})'><td>${item.name}</td><td>${totalQty}</td><td>${(totalQty/daysCount).toFixed(1)}</td><td>${totalTimes}</td><td>${(totalTimes/daysCount).toFixed(1)}</td></tr>`; } }); if(hasItem) html += groupHtml + '</tbody></table>'; } document.getElementById('usage-table-container').innerHTML = html || '<p style="text-align:center; padding:20px;">無數據</p>'; updateUsageChart(); }
         function toggleReportItem(obj) { const idx = globalSelectedItems.findIndex(i => i.fullName === obj.fullName); if(idx > -1) globalSelectedItems.splice(idx,1); else if(globalSelectedItems.length < 5) globalSelectedItems.push(obj); applyUsageFilter(); }
         function updateUsageChart() { const chartEl = document.getElementById('usageChart'); if(!chartEl) return; const ctx = chartEl.getContext('2d'); const s = document.getElementById('rep-s-date').value, e = document.getElementById('rep-e-date').value; let labels = []; for (let d = new Date(s); d <= new Date(e); d.setDate(d.getDate() + 1)) labels.push(d.toISOString().split('T')[0].slice(5)); const datasets = globalSelectedItems.map((item, i) => { const pts = labels.map(l => { let sum = 0; (allRecords[currentUserID]?.[item.name] || []).forEach(r => { if(new Date(r.start).toISOString().split('T')[0].slice(5) === l && r.cat === item.cat) sum += (r.qty || 1); }); return sum; }); return { label: item.fullName, data: pts, borderColor: reportColors[i], backgroundColor: reportColors[i], tension: 0.3, pointRadius: 4 }; }); if(usageChart) usageChart.destroy(); usageChart = new Chart(ctx, { type: 'line', data: { labels, datasets }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } } }); }
 
-        function renderStabilitySection() { 
-            const body = document.getElementById('report-main-body'); 
-            const myRecs = allRecords[currentUserID] || {}; 
-            let totalItemsCount = 0; 
-            for(let c in structure) for(let g in structure[c]) totalItemsCount += structure[c][g].length; 
-            
-            const today = new Date();
-            const todayStr = today.toISOString().split('T')[0];
-            const hourLabels = [];
-            for(let h=8; h<=22; h++) hourLabels.push(`${h}:00`);
+        function renderStabilitySection() { const body = document.getElementById('report-main-body'); const myRecs = allRecords[currentUserID] || {}; let totalItemsCount = 0; for(let c in structure) for(let g in structure[c]) totalItemsCount += structure[c][g].length; const today = new Date(); const todayStr = today.toISOString().split('T')[0]; const hourLabels = []; for(let h=8; h<=22; h++) hourLabels.push(`${h}:00`); let calendarDays = []; let startOfCalendar = new Date(); startOfCalendar.setDate(today.getDate() - 27); let dayOfWeek = startOfCalendar.getDay(); let diffToMonday = (dayOfWeek === 0 ? 6 : dayOfWeek - 1); startOfCalendar.setDate(startOfCalendar.getDate() - diffToMonday); window.stabilityLines = []; for(let i=0; i<35; i++) { const d = new Date(startOfCalendar); d.setDate(startOfCalendar.getDate() + i); const dStr = d.toISOString().split('T')[0]; const dLabel = `${d.getMonth() + 1}/${d.getDate()}`; let dayLogs = [], dayUniqueItems = new Set(), hourlyItemSets = Array.from({length: 15}, () => new Set()); for(let n in myRecs) { if(n === 'dailyNotes') continue; const matched = (myRecs[n] || []).filter(r => new Date(r.start).toISOString().split('T')[0] === dStr); if(matched.length > 0) { matched.forEach(m => { dayLogs.push({ ...m, name: n }); const hr = new Date(m.start).getHours(); if(hr >= 8 && hr <= 22) hourlyItemSets[hr-8].add(n); }); dayUniqueItems.add(n); } } const hourlyCounts = hourlyItemSets.map(set => set.size); let statusCls = ""; if (dStr <= todayStr) { let hasBurst = false; const sorted = dayLogs.sort((a,b) => a.start - b.start); for(let k=0; k<sorted.length; k++){ const window = sorted.filter(r => r.start >= sorted[k].start && r.start <= sorted[k].start + 300000); if(new Set(window.map(r => r.name)).size > 10) { hasBurst = true; break; } } let prev7 = []; for(let j=1; j<=7; j++){ let pd = new Date(dStr); pd.setDate(pd.getDate()-j); let pdStr = pd.toISOString().split('T')[0]; let c = 0; for(let n in myRecs) { if(n !== 'dailyNotes') c += (myRecs[n] || []).filter(r => new Date(r.start).toISOString().split('T')[0] === pdStr).length; } prev7.push(c); } const m7 = prev7.reduce((a,b)=>a+b,0)/7; const s7 = Math.sqrt(prev7.map(x=>Math.pow(x-m7,2)).reduce((a,b)=>a+b,0)/7) || 0.1; const coverage = totalItemsCount > 0 ? (dayUniqueItems.size / totalItemsCount) : 0; if (hasBurst || Math.abs(dayLogs.length - m7) > (2 * s7) || coverage < 0.3) statusCls = "day-error"; else if (Math.abs(dayLogs.length - m7) > (1.5 * s7) || (dayLogs.length > 0 && coverage < 0.5)) statusCls = "day-low"; else if (dayLogs.length > 0) statusCls = "day-stable"; } if (dayLogs.length > 0) { window.stabilityLines.push({ label: dStr, data: hourlyCounts, borderColor: dStr === selectedStabilityDate ? '#2980b9' : 'rgba(200, 200, 200, 0.4)', borderWidth: dStr === selectedStabilityDate ? 3 : 1, pointRadius: dStr === selectedStabilityDate ? 4 : 0, tension: 0.3, order: dStr === selectedStabilityDate ? 0 : 1 }); } calendarDays.push({ full: dStr, label: dLabel, count: dayLogs.length, statusCls }); } body.innerHTML = `<div class="report-left"><div class="admin-section"><h3>⏰ 時段紀錄密度 (品項數對比)</h3><div style="height: 220px; margin-bottom: 25px; background: #fff; padding: 10px; border-radius: 12px; border: 1px solid #f1f5f9;"><canvas id="stabilityTrendChart"></canvas></div><div class="weekday-header"><div>一</div><div>二</div><div>三</div><div>四</div><div>五</div><div>六</div><div>日</div></div><div class="stability-grid" id="stability-calendar-grid">${calendarDays.map(d => `<div class="day-cell ${d.statusCls} ${selectedStabilityDate===d.full?'selected-day':''}" onclick="selectStabilityDate(event, '${d.full}')"><b>${d.count}</b><span style="font-size:9px;">${d.label}</span></div>`).join('')}</div><div style="font-size:11px; color:#94a3b8; margin-top:10px; display:flex; gap:15px; justify-content:center;"><span><i style="background:#d1fae5; border:1px solid #10b981; width:10px; height:10px; display:inline-block;"></i> 穩定</span><span><i style="background:#fef3c7; border:1px solid #f59e0b; width:10px; height:10px; display:inline-block;"></i> 偏低</span><span><i style="background:#fee2e2; border:1px solid #ef4444; width:10px; height:10px; display:inline-block;"></i> 異常</span></div></div></div><div class="report-right" id="stability-detail-panel"></div>`; const ctx = document.getElementById('stabilityTrendChart').getContext('2d'); if(stabilityTrendChart) stabilityTrendChart.destroy(); stabilityTrendChart = new Chart(ctx, { type: 'line', data: { labels: hourLabels, datasets: window.stabilityLines }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { filter: (item) => item.dataset.order === 0 } }, scales: { y: { beginAtZero: true, min: 0, max: 15, ticks: { stepSize: 3 } } } } }); renderStabilityDetail(selectedStabilityDate); }
+        function selectStabilityDate(event, dStr) { if(event) event.preventDefault(); selectedStabilityDate = dStr; document.querySelectorAll('#stability-calendar-grid .day-cell').forEach(cell => cell.classList.remove('selected-day')); const target = event.currentTarget; if(target) target.classList.add('selected-day'); if(stabilityTrendChart) { stabilityTrendChart.data.datasets.forEach(ds => { const isSelected = ds.label === dStr; ds.borderWidth = isSelected ? 3 : 1; ds.borderColor = isSelected ? '#2980b9' : 'rgba(200, 200, 200, 0.4)'; ds.pointRadius = isSelected ? 4 : 0; ds.order = isSelected ? 0 : 1; }); stabilityTrendChart.update('none'); } renderStabilityDetail(dStr); }
+        function renderStabilityDetail(dStr) { const panel = document.getElementById('stability-detail-panel'); const myRecs = allRecords[currentUserID] || {}; let logs = []; let dayUnique = new Set(); for(let n in myRecs) { if(n === 'dailyNotes') continue; (myRecs[n] || []).forEach(r => { if(new Date(r.start).toISOString().split('T')[0] === dStr) { logs.push({ name: n, time: r.start, cat: r.cat }); dayUnique.add(n); } }); } logs.sort((a,b) => a.time - b.time); let totalItemsCount = 0; for(let c in structure) for(let g in structure[c]) totalItemsCount += structure[c][g].length; let prev7Counts = []; let prev7Coverages = []; for(let i=1; i<=7; i++) { let td = new Date(dStr); td.setDate(td.getDate()-i); let ts = td.toISOString().split('T')[0]; let c = 0; let u = new Set(); for(let n in myRecs) { if(n === 'dailyNotes') continue; const matched = (myRecs[n] || []).filter(r => new Date(r.start).toISOString().split('T')[0] === ts); if(matched.length > 0) { c += matched.length; u.add(n); } } prev7Counts.push(c); prev7Coverages.push(u.size / (totalItemsCount || 1)); } const avg7Count = prev7Counts.reduce((a,b)=>a+b,0)/7; const avg7Cov = prev7Coverages.reduce((a,b)=>a+b,0)/7; const currentCov = totalItemsCount > 0 ? (dayUnique.size / totalItemsCount) : 0; let suggestions = []; let hasBurst = false; const sorted = logs.sort((a,b) => a.time - b.time); for(let k=0; k<sorted.length; k++){ const win = sorted.filter(r => r.time >= sorted[k].time && r.time <= sorted[k].time + 300000); if(new Set(win.map(r => r.name)).size > 10) { hasBurst = true; break; } } if (logs.length === 0) { suggestions.push({title: "⚠️ 今日尚未紀錄", text: "尚未偵測到任何操作紀錄，請確認是否漏傳或尚未開始作業。", type: "error"}); } else { if (hasBurst) suggestions.push({title: "❗ 偵測到補登行為", text: "今日有短時間內大量連續紀錄的現象，建議作業當下立即完成。", type: "error"}); if (currentCov < 0.4) suggestions.push({title: "❗ 品項覆蓋率低", text: `今日僅追蹤了 ${(currentCov*100).toFixed(0)}% 的食材，明顯低於平均。`, type: "low"}); if (Math.abs(logs.length - avg7Count) > 20) suggestions.push({title: "❓ 總量波動異常", text: `今日紀錄筆數 (${logs.length}筆) 與平均 (${avg7Count.toFixed(1)}筆) 差異過大。`, type: "low"}); if (suggestions.length === 0) suggestions.push({title: "✅ 操作狀況良好", text: "今日紀錄節奏穩定，涵蓋品項齊全，請繼續保持。", type: "stable"}); } panel.innerHTML = `<h3>📅 ${dStr} 分析報告</h3><div style="display:flex; gap:10px; margin-bottom:15px;"><div style="flex:1; background:#f8fafc; padding:10px; border-radius:10px; text-align:center; border:1px solid #e2e8f0;"><div style="font-size:11px; color:#64748b;">今日/近7日平均記錄筆數</div><div style="font-size:18px; font-weight:bold;">${logs.length} <small style="font-size:12px; font-weight:normal; color:#94a3b8;">/ ${avg7Count.toFixed(1)}</small></div></div><div style="flex:1; background:#f8fafc; padding:10px; border-radius:10px; text-align:center; border:1px solid #e2e8f0;"><div style="font-size:11px; color:#64748b;">今日/近7日平均覆蓋率</div><div style="font-size:18px; font-weight:bold;">${(currentCov * 100).toFixed(0)}% <small style="font-size:12px; font-weight:normal; color:#94a3b8;">/ ${(avg7Cov * 100).toFixed(0)}%</small></div></div></div><div id="stability-suggestions-list" style="max-height: 180px; overflow-y: auto; padding-right: 5px; margin-bottom: 10px;">${suggestions.map(s => `<div class="alert-box" style="background:${s.type==='stable'?'#f0fdf4':(s.type==='error'?'#fff5f5':'#ffffff')}; border:1px solid ${s.type==='stable'?'#bbf7d0':(s.type==='error'?'#fecaca':'#e2e8f0')}; color:${s.type==='stable'?'#166534':(s.type==='error'?'#991b1b':'#475569')}; margin-bottom:10px;"><div style="font-weight:bold; margin-bottom:3px;">${s.title}</div><div style="font-size:12px; opacity:0.9;">${s.text}</div></div>`).join('')}</div><div class="daily-note-area" style="margin-top: 5px; padding-top: 10px;"><div style="font-size:13px; font-weight:bold; color:#475569; margin-bottom:5px;">📝 當日備註</div><textarea id="daily-note-input" class="daily-note-input" style="height: 60px;" placeholder="若有特殊情況請註記..." oninput="saveDailyNote('${dStr}', this.value)">${(allRecords[currentUserID]?.dailyNotes?.[dStr]) || ""}</textarea></div><div style="margin-top:15px; border-top:1px solid #eee; padding-top:10px; flex: 1; overflow: hidden; display: flex; flex-direction: column; min-height: 120px;"><div style="font-size:12px; color:#94a3b8; margin-bottom:5px;">操作流水帳 (可滑動)：</div><div style="flex: 1; overflow-y: auto; background: #fcfcfc; border-radius: 8px; border: 1px solid #f1f5f9;"><table class="stat-table">${logs.map(l => `<tr><td width="30%">${new Date(l.time).getHours()}:${new Date(l.time).getMinutes().toString().padStart(2,'0')}</td><td><b>[${categoryMap[l.cat]}]</b> ${l.name}</td></tr>`).join('') || '<tr><td colspan="2" style="text-align:center; color:#ccc; padding:20px;">無明細</td></tr>'}</table></div></div>`; }
 
-            let calendarDays = [];
-            let startOfCalendar = new Date();
-            startOfCalendar.setDate(today.getDate() - 27); 
-            let dayOfWeek = startOfCalendar.getDay();
-            let diffToMonday = (dayOfWeek === 0 ? 6 : dayOfWeek - 1);
-            startOfCalendar.setDate(startOfCalendar.getDate() - diffToMonday);
-
-            window.stabilityLines = []; 
-            for(let i=0; i<35; i++) {
-                const d = new Date(startOfCalendar);
-                d.setDate(startOfCalendar.getDate() + i);
-                const dStr = d.toISOString().split('T')[0];
-                const dLabel = `${d.getMonth() + 1}/${d.getDate()}`;
-                
-                let dayLogs = [], dayUniqueItems = new Set(), hourlyItemSets = Array.from({length: 15}, () => new Set());
-                for(let n in myRecs) {
-                    if(n === 'dailyNotes') continue;
-                    const matched = (myRecs[n] || []).filter(r => new Date(r.start).toISOString().split('T')[0] === dStr);
-                    if(matched.length > 0) {
-                        matched.forEach(m => { 
-                            dayLogs.push({ ...m, name: n }); 
-                            const hr = new Date(m.start).getHours(); 
-                            if(hr >= 8 && hr <= 22) hourlyItemSets[hr-8].add(n); 
-                        });
-                        dayUniqueItems.add(n);
-                    }
-                }
-
-                const hourlyCounts = hourlyItemSets.map(set => set.size);
-                let statusCls = ""; 
-                let hasBurst = false; 
-                const sorted = dayLogs.sort((a,b) => a.start - b.start);
-                for(let k=0; k<sorted.length; k++){ 
-                    const window = sorted.filter(r => r.start >= sorted[k].start && r.start <= sorted[k].start + 300000); 
-                    if(new Set(window.map(r => r.name)).size > 10) { hasBurst = true; break; } 
-                }
-                
-                let prev7 = []; 
-                for(let j=1; j<=7; j++){ 
-                    let pd = new Date(dStr); pd.setDate(pd.getDate()-j); 
-                    let pdStr = pd.toISOString().split('T')[0]; 
-                    let c = 0; for(let n in myRecs) { if(n !== 'dailyNotes') c += (myRecs[n] || []).filter(r => new Date(r.start).toISOString().split('T')[0] === pdStr).length; } 
-                    prev7.push(c); 
-                }
-                const m7 = prev7.reduce((a,b)=>a+b,0)/7; 
-                const s7 = Math.sqrt(prev7.map(x=>Math.pow(x-m7,2)).reduce((a,b)=>a+b,0)/7) || 0.1; 
-                const coverage = totalItemsCount > 0 ? (dayUniqueItems.size / totalItemsCount) : 0;
-
-                if (dStr <= todayStr) { 
-                    if (hasBurst || Math.abs(dayLogs.length - m7) > (2 * s7) || coverage < 0.3) statusCls = "day-error"; 
-                    else if (Math.abs(dayLogs.length - m7) > (1.5 * s7) || (dayLogs.length > 0 && coverage < 0.5)) statusCls = "day-low"; 
-                    else if (dayLogs.length > 0) statusCls = "day-stable"; 
-                }
-
-                if (dayLogs.length > 0) {
-                    window.stabilityLines.push({ label: dStr, data: hourlyCounts, borderColor: dStr === selectedStabilityDate ? '#2980b9' : 'rgba(200, 200, 200, 0.4)', borderWidth: dStr === selectedStabilityDate ? 3 : 1, pointRadius: dStr === selectedStabilityDate ? 4 : 0, tension: 0.3, order: dStr === selectedStabilityDate ? 0 : 1 });
-                }
-                calendarDays.push({ full: dStr, label: dLabel, count: dayLogs.length, statusCls });
-            }
-
-            body.innerHTML = `
-                <div class="report-left">
-                    <div class="admin-section">
-                        <h3>⏰ 時段紀錄密度 (品項數對比)</h3>
-                        <div style="height: 220px; margin-bottom: 25px; background: #fff; padding: 10px; border-radius: 12px; border: 1px solid #f1f5f9;">
-                            <canvas id="stabilityTrendChart"></canvas>
-                        </div>
-                        <div class="weekday-header">
-                            <div>一</div><div>二</div><div>三</div><div>四</div><div>五</div><div>六</div><div>日</div>
-                        </div>
-                        <div class="stability-grid" id="stability-calendar-grid">
-                            ${calendarDays.map(d => `<div class="day-cell ${d.statusCls} ${selectedStabilityDate===d.full?'selected-day':''}" onclick="selectStabilityDate(event, '${d.full}')"><b>${d.count}</b><span style="font-size:9px;">${d.label}</span></div>`).join('')}
-                        </div>
-                        <div style="font-size:11px; color:#94a3b8; margin-top:10px; display:flex; gap:15px; justify-content:center;">
-                            <span><i style="background:#d1fae5; border:1px solid #10b981; width:10px; height:10px; display:inline-block;"></i> 穩定</span>
-                            <span><i style="background:#fef3c7; border:1px solid #f59e0b; width:10px; height:10px; display:inline-block;"></i> 偏低</span>
-                            <span><i style="background:#fee2e2; border:1px solid #ef4444; width:10px; height:10px; display:inline-block;"></i> 異常</span>
-                        </div>
-                    </div>
-                </div>
-                <div class="report-right" id="stability-detail-panel"></div>`; 
-            
-            const ctx = document.getElementById('stabilityTrendChart').getContext('2d');
-            if(stabilityTrendChart) stabilityTrendChart.destroy();
-            stabilityTrendChart = new Chart(ctx, {
-                type: 'line',
-                data: { labels: hourLabels, datasets: window.stabilityLines },
-                options: { 
-                    responsive: true, maintainAspectRatio: false, 
-                    plugins: { 
-                        legend: { display: false }, 
-                        tooltip: { filter: (item) => item.dataset.order === 0 } 
-                    }, 
-                    scales: { 
-                        y: { beginAtZero: true, min: 0, max: 15, ticks: { stepSize: 3 } } 
-                    } 
-                }
-            });
-            renderStabilityDetail(selectedStabilityDate); 
-        }
-
-        function selectStabilityDate(event, dStr) { 
-            if(event) event.preventDefault();
-            selectedStabilityDate = dStr; 
-            document.querySelectorAll('#stability-calendar-grid .day-cell').forEach(cell => cell.classList.remove('selected-day'));
-            const target = event.currentTarget;
-            if(target) target.classList.add('selected-day');
-            if(stabilityTrendChart) {
-                stabilityTrendChart.data.datasets.forEach(ds => {
-                    const isSelected = ds.label === dStr;
-                    ds.borderWidth = isSelected ? 3 : 1;
-                    ds.borderColor = isSelected ? '#2980b9' : 'rgba(200, 200, 200, 0.4)';
-                    ds.pointRadius = isSelected ? 4 : 0;
-                    ds.order = isSelected ? 0 : 1;
-                });
-                stabilityTrendChart.update('none');
-            }
-            renderStabilityDetail(dStr);
-        }
-
-        function renderStabilityDetail(dStr) {
-            const panel = document.getElementById('stability-detail-panel'); 
-            const myRecs = allRecords[currentUserID] || {}; 
-            let logs = []; let dayUnique = new Set(); 
-            for(let n in myRecs) { if(n === 'dailyNotes') continue; (myRecs[n] || []).forEach(r => { if(new Date(r.start).toISOString().split('T')[0] === dStr) { logs.push({ name: n, time: r.start, cat: r.cat }); dayUnique.add(n); } }); }
-            logs.sort((a,b) => a.time - b.time); 
-            let totalItemsCount = 0; 
-            for(let c in structure) for(let g in structure[c]) totalItemsCount += structure[c][g].length; 
-            let prev7Counts = []; let prev7Coverages = [];
-            for(let i=1; i<=7; i++) {
-                let td = new Date(dStr); td.setDate(td.getDate()-i); let ts = td.toISOString().split('T')[0]; let c = 0; let u = new Set();
-                for(let n in myRecs) { if(n === 'dailyNotes') continue; const matched = (myRecs[n] || []).filter(r => new Date(r.start).toISOString().split('T')[0] === ts); if(matched.length > 0) { c += matched.length; u.add(n); } }
-                prev7Counts.push(c); prev7Coverages.push(u.size / (totalItemsCount || 1));
-            }
-            const avg7Count = prev7Counts.reduce((a,b)=>a+b,0)/7; 
-            const avg7Cov = prev7Coverages.reduce((a,b)=>a+b,0)/7; 
-            const currentCov = totalItemsCount > 0 ? (dayUnique.size / totalItemsCount) : 0;
-            let suggestions = [];
-            let hasBurst = false;
-            const sorted = logs.sort((a,b) => a.time - b.time);
-            for(let k=0; k<sorted.length; k++){ 
-                const win = sorted.filter(r => r.time >= sorted[k].time && r.time <= sorted[k].time + 300000); 
-                if(new Set(win.map(r => r.name)).size > 10) { hasBurst = true; break; } 
-            }
-            if (logs.length === 0) {
-                suggestions.push({title: "⚠️ 今日尚未紀錄", text: "尚未偵測到任何操作紀錄，請確認是否漏傳或尚未開始作業。", type: "error"});
-            } else {
-                if (hasBurst) suggestions.push({title: "❗ 偵測到補登行為", text: "今日有短時間內大量連續紀錄的現象，建議作業當下立即完成。", type: "error"});
-                if (currentCov < 0.4) suggestions.push({title: "❗ 品項覆蓋率低", text: `今日僅追蹤了 ${(currentCov*100).toFixed(0)}% 的食材，明顯低於平均。`, type: "low"});
-                if (Math.abs(logs.length - avg7Count) > 20) suggestions.push({title: "❓ 總量波動異常", text: `今日紀錄筆數 (${logs.length}筆) 與平均 (${avg7Count.toFixed(1)}筆) 差異過大。`, type: "low"});
-                if (suggestions.length === 0) suggestions.push({title: "✅ 操作狀況良好", text: "今日紀錄節奏穩定，涵蓋品項齊全，請繼續保持。", type: "stable"});
-            }
-            panel.innerHTML = `
-                <h3>📅 ${dStr} 分析報告</h3>
-                <div style="display:flex; gap:10px; margin-bottom:15px;">
-                    <div style="flex:1; background:#f8fafc; padding:10px; border-radius:10px; text-align:center; border:1px solid #e2e8f0;">
-                        <div style="font-size:11px; color:#64748b;">今日/近7日平均記錄筆數</div>
-                        <div style="font-size:18px; font-weight:bold;">${logs.length} <small style="font-size:12px; font-weight:normal; color:#94a3b8;">/ ${avg7Count.toFixed(1)}</small></div>
-                    </div>
-                    <div style="flex:1; background:#f8fafc; padding:10px; border-radius:10px; text-align:center; border:1px solid #e2e8f0;">
-                        <div style="font-size:11px; color:#64748b;">今日/近7日平均覆蓋率</div>
-                        <div style="font-size:18px; font-weight:bold;">${(currentCov * 100).toFixed(0)}% <small style="font-size:12px; font-weight:normal; color:#94a3b8;">/ ${(avg7Cov * 100).toFixed(0)}%</small></div>
-                    </div>
-                </div>
-                <div id="stability-suggestions-list" style="max-height: 180px; overflow-y: auto; padding-right: 5px; margin-bottom: 10px;">
-                    ${suggestions.map(s => `
-                        <div class="alert-box" style="background:${s.type==='stable'?'#f0fdf4':(s.type==='error'?'#fff5f5':'#ffffff')}; border:1px solid ${s.type==='stable'?'#bbf7d0':(s.type==='error'?'#fecaca':'#e2e8f0')}; color:${s.type==='stable'?'#166534':(s.type==='error'?'#991b1b':'#475569')}; margin-bottom:10px;">
-                            <div style="font-weight:bold; margin-bottom:3px;">${s.title}</div>
-                            <div style="font-size:12px; opacity:0.9;">${s.text}</div>
-                        </div>
-                    `).join('')}
-                </div>
-                <div class="daily-note-area" style="margin-top: 5px; padding-top: 10px;">
-                    <div style="font-size:13px; font-weight:bold; color:#475569; margin-bottom:5px;">📝 當日備註</div>
-                    <textarea id="daily-note-input" class="daily-note-input" style="height: 60px;" placeholder="若有特殊情況請註記..." oninput="saveDailyNote('${dStr}', this.value)">${(allRecords[currentUserID]?.dailyNotes?.[dStr]) || ""}</textarea>
-                </div>
-                <div style="margin-top:15px; border-top:1px solid #eee; padding-top:10px; flex: 1; overflow: hidden; display: flex; flex-direction: column; min-height: 120px;">
-                    <div style="font-size:12px; color:#94a3b8; margin-bottom:5px;">操作流水帳 (可滑動)：</div>
-                    <div style="flex: 1; overflow-y: auto; background: #fcfcfc; border-radius: 8px; border: 1px solid #f1f5f9;">
-                        <table class="stat-table">
-                            ${logs.map(l => `<tr><td width="30%">${new Date(l.time).getHours()}:${new Date(l.time).getMinutes().toString().padStart(2,'0')}</td><td><b>[${categoryMap[l.cat]}]</b> ${l.name}</td></tr>`).join('') || '<tr><td colspan="2" style="text-align:center; color:#ccc; padding:20px;">無明細</td></tr>'}
-                        </table>
-                    </div>
-                </div>`; 
-        }
-
-        // --- 監控優化版區塊 ---
-
-        function showMonitor(btn) { 
-            document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active')); 
-            btn.classList.add('active'); 
-            document.getElementById('sub-nav-bar').style.display = 'none'; 
-            renderMonitorList(); 
-        }
-
-        function renderMonitorList() { 
-            const searchVal = document.getElementById('mon-search-input')?.value || ""; 
-            document.getElementById('content-display').innerHTML = `
-                <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:20px;">
-                    <div>
-                        <h2 style="margin:0;">👁️ 全員監控總覽</h2>
-                        <p style="margin:5px 0 0 0; color:#64748b; font-size:14px;">顏色異常越多的帳號將自動排在上方</p>
-                    </div>
-                    <input type="text" id="mon-search-input" class="input-box" style="width:250px;" placeholder="🔍 搜尋名稱..." value="${searchVal}">
-                </div>
-                <div id="mon-list-container" class="mon-grid"></div>
-            `; 
-            document.getElementById('mon-search-input').addEventListener('input', (e) => { updateMonitorUI(e.target.value); }); 
-            updateMonitorUI(searchVal); 
-        }
+        function showMonitor(btn) { document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); document.getElementById('sub-nav-bar').style.display = 'none'; renderMonitorList(); }
+        function renderMonitorList() { const searchVal = document.getElementById('mon-search-input')?.value || ""; document.getElementById('content-display').innerHTML = `<div style="display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:20px;"><div><h2 style="margin:0;">👁️ 全員監控總覽</h2><p style="margin:5px 0 0 0; color:#64748b; font-size:14px;">顏色異常越多的帳號將自動排在上方</p></div><input type="text" id="mon-search-input" class="input-box" style="width:250px;" placeholder="🔍 搜尋名稱..." value="${searchVal}"></div><div id="mon-list-container" class="mon-grid"></div>`; document.getElementById('mon-search-input').addEventListener('input', (e) => { updateMonitorUI(e.target.value); }); updateMonitorUI(searchVal); }
 
         function updateMonitorUI(filter) { 
             const container = document.getElementById('mon-list-container'); 
             const nowTs = new Date().getTime();
             const todayDate = new Date();
             const todayStr = todayDate.toISOString().split('T')[0];
-
-            let totalItemsCount = 0; 
-            for(let c in structure) for(let g in structure[c]) totalItemsCount += structure[c][g].length;
-
+            let totalItemsCount = 0; for(let c in structure) for(let g in structure[c]) totalItemsCount += structure[c][g].length;
             let users = Object.keys(usersData).map(uid => {
                 const myRecs = allRecords[uid] || {};
-                let lastTime = 0;
-                let todayCount = 0;
-                let warningPoints = 0; 
-                let sevenDayHtml = '';
-
+                let lastTime = 0, todayCount = 0, warningPoints = 0, sevenDayHtml = '';
                 for (let i = 6; i >= 0; i--) {
-                    let d = new Date();
-                    d.setDate(todayDate.getDate() - i);
-                    let dStr = d.toISOString().split('T')[0];
-                    let dLabel = `${d.getMonth() + 1}/${d.getDate()}`;
-
+                    let d = new Date(); d.setDate(todayDate.getDate() - i);
+                    let dStr = d.toISOString().split('T')[0], dLabel = `${d.getMonth() + 1}/${d.getDate()}`;
                     let dayLogs = [], dayUniqueItems = new Set();
                     for(let n in myRecs) {
                         if(n === 'dailyNotes') continue;
@@ -686,122 +490,28 @@
                             dayUniqueItems.add(n);
                         }
                     }
-
                     let statusCls = ""; 
                     if (dStr <= todayStr) {
-                        let hasBurst = false;
-                        const sorted = dayLogs.sort((a,b) => a.start - b.start);
-                        for(let k=0; k<sorted.length; k++){ 
-                            const window = sorted.filter(r => r.start >= sorted[k].start && r.start <= sorted[k].start + 300000); 
-                            if(new Set(window.map(r => r.name)).size > 10) { hasBurst = true; break; } 
-                        }
-                        
-                        let prev7 = []; 
-                        for(let j=1; j<=7; j++){ 
-                            let pd = new Date(dStr); pd.setDate(pd.getDate()-j); 
-                            let pdStr = pd.toISOString().split('T')[0]; 
-                            let c = 0; for(let n in myRecs) { if(n !== 'dailyNotes') c += (myRecs[n] || []).filter(r => new Date(r.start).toISOString().split('T')[0] === pdStr).length; } 
-                            prev7.push(c); 
-                        }
-                        const m7 = prev7.reduce((a,b)=>a+b,0)/7; 
-                        const s7 = Math.sqrt(prev7.map(x=>Math.pow(x-m7,2)).reduce((a,b)=>a+b,0)/7) || 0.1; 
-                        const coverage = totalItemsCount > 0 ? (dayUniqueItems.size / totalItemsCount) : 0;
-
-                        if (hasBurst || Math.abs(dayLogs.length - m7) > (2 * s7) || coverage < 0.3) {
-                            statusCls = "day-error";
-                            warningPoints += 2;
-                        } else if (Math.abs(dayLogs.length - m7) > (1.5 * s7) || (dayLogs.length > 0 && coverage < 0.5)) {
-                            statusCls = "day-low";
-                            warningPoints += 1;
-                        } else if (dayLogs.length > 0) {
-                            statusCls = "day-stable";
-                        }
+                        let hasBurst = false; const sorted = dayLogs.sort((a,b) => a.start - b.start);
+                        for(let k=0; k<sorted.length; k++){ const win = sorted.filter(r => r.start >= sorted[k].start && r.start <= sorted[k].start + 300000); if(new Set(win.map(r => r.name)).size > 10) { hasBurst = true; break; } }
+                        let prev7 = []; for(let j=1; j<=7; j++){ let pd = new Date(dStr); pd.setDate(pd.getDate()-j); let pdStr = pd.toISOString().split('T')[0]; let c = 0; for(let n in myRecs) { if(n !== 'dailyNotes') c += (myRecs[n] || []).filter(r => new Date(r.start).toISOString().split('T')[0] === pdStr).length; } prev7.push(c); }
+                        const m7 = prev7.reduce((a,b)=>a+b,0)/7, s7 = Math.sqrt(prev7.map(x=>Math.pow(x-m7,2)).reduce((a,b)=>a+b,0)/7) || 0.1, coverage = totalItemsCount > 0 ? (dayUniqueItems.size / totalItemsCount) : 0;
+                        if (hasBurst || Math.abs(dayLogs.length - m7) > (2 * s7) || coverage < 0.3) { statusCls = "day-error"; warningPoints += 2; }
+                        else if (Math.abs(dayLogs.length - m7) > (1.5 * s7) || (dayLogs.length > 0 && coverage < 0.5)) { statusCls = "day-low"; warningPoints += 1; }
+                        else if (dayLogs.length > 0) { statusCls = "day-stable"; }
                     }
                     sevenDayHtml += `<div class="day-cell ${statusCls}" style="aspect-ratio: auto; height: 35px; border-radius: 4px; font-size: 9px;"><b>${dayLogs.length}</b><span>${dLabel}</span></div>`;
                 }
-
                 const isLate = (nowTs - lastTime > 86400000 || lastTime === 0);
                 let status = isLate ? "error" : (todayCount < 5 ? "warning" : "stable");
-
                 return { uid, name: usersData[uid].name || uid, lastTime, todayCount, status, warningPoints, sevenDayHtml };
-            })
-            .filter(u => u.name.toLowerCase().includes(filter.toLowerCase()))
-            .sort((a, b) => b.warningPoints - a.warningPoints);
-
-            container.innerHTML = users.map(u => `
-                <div class="mon-user-card" onclick="openMonitorChoice('${u.uid}', '${u.name}')">
-                    <div class="mon-status-tag mon-tag-${u.status}"></div>
-                    <div class="mon-header" style="margin-bottom: 5px;">
-                        <div class="mon-name">👤 ${u.name}</div>
-                        <div style="color:${u.status==='error'?'#ef4444':'#10b981'}; font-weight:bold; font-size:13px;">
-                            ${u.status==='error'?'⚠️ 異常':(u.status==='warning'?'⏳ 待觀察':'✅ 正常')}
-                        </div>
-                    </div>
-                    
-                    <div style="font-size: 11px; color: #94a3b8; margin-bottom: 5px;">最近 7 日操作穩定度：</div>
-                    <div class="stability-grid" style="grid-template-columns: repeat(7, 1fr); gap: 4px; margin-top: 0; margin-bottom: 12px;">
-                        ${u.sevenDayHtml}
-                    </div>
-
-                    <div class="mon-stat-row">
-                        <div class="mon-stat-box"><div class="mon-stat-val">${u.todayCount}</div><div class="mon-stat-label">今日筆數</div></div>
-                        <div class="mon-stat-box"><div class="mon-stat-val" style="font-size:13px;">${u.lastTime ? fmt(u.lastTime).split(' ')[1] : '--:--'}</div><div class="mon-stat-label">最後時間</div></div>
-                    </div>
-                    <div class="mon-click-tip">點擊展開功能 〉</div>
-                </div>
-            `).join('');
+            }).filter(u => u.name.toLowerCase().includes(filter.toLowerCase())).sort((a, b) => b.warningPoints - a.warningPoints);
+            container.innerHTML = users.map(u => `<div class="mon-user-card" onclick="openMonitorChoice('${u.uid}', '${u.name}')"><div class="mon-status-tag mon-tag-${u.status}"></div><div class="mon-header" style="margin-bottom: 5px;"><div class="mon-name">👤 ${u.name}</div><div style="color:${u.status==='error'?'#ef4444':'#10b981'}; font-weight:bold; font-size:13px;">${u.status==='error'?'⚠️ 異常':(u.status==='warning'?'⏳ 待觀察':'✅ 正常')}</div></div><div style="font-size: 11px; color: #94a3b8; margin-bottom: 5px;">最近 7 日操作穩定度：</div><div class="stability-grid" style="grid-template-columns: repeat(7, 1fr); gap: 4px; margin-top: 0; margin-bottom: 12px;">${u.sevenDayHtml}</div><div class="mon-stat-row"><div class="mon-stat-box"><div class="mon-stat-val">${u.todayCount}</div><div class="mon-stat-label">今日筆數</div></div><div class="mon-stat-box"><div class="mon-stat-val" style="font-size:13px;">${u.lastTime ? fmt(u.lastTime).split(' ')[1] : '--:--'}</div><div class="mon-stat-label">最後時間</div></div></div><div class="mon-click-tip">點擊展開功能 〉</div></div>`).join('');
         }
 
-        function openMonitorChoice(uid, name) {
-            document.getElementById('mon-choice-name').innerText = name;
-            document.getElementById('mon-btn-sum').onclick = () => viewUserSummary(uid);
-            document.getElementById('mon-btn-rep').onclick = () => viewUserReport(uid);
-            document.getElementById('mon-choice-overlay').style.display = 'flex';
-        }
-
-        function viewUserSummary(uid) {
-            document.getElementById('mon-choice-overlay').style.display = 'none';
-            currentUserID = uid;
-            const display = document.getElementById('content-display');
-            const now = new Date().getTime();
-            let html = `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
-                            <h2>📋 ${usersData[uid]?.name || uid} - 品項狀態總覽</h2>
-                            <button onclick="renderMonitorList()" style="padding:10px 20px; border-radius:10px; background:#f1f5f9; border:1px solid #e2e8f0; cursor:pointer; font-weight:bold;">返回監控清單</button>
-                        </div>`;
-            
-            const cats = { purchase: '進貨', thaw: '解凍', open: '開封', process: '製備' };
-            for(let k in cats) {
-                html += `<div style="background:#fff; padding:10px; border-radius:10px; margin-top:15px; font-weight:bold; border-bottom: 2px solid #e2e8f0;">${cats[k]}</div><div class="card-container" style="margin-top:10px;">`;
-                for(let g in structure[k]) {
-                    (structure[k][g] || []).forEach(item => {
-                        const recs = allRecords[uid]?.[item.name], rec = (recs && recs.length > 0) ? recs[recs.length-1] : null;
-                        let cls = "food-item-card" + (rec ? " active-card" : "");
-                        let timeLabel = rec ? fmt(rec.expire) : "--/-- --:--";
-                        if (rec) {
-                            if (rec.expire === 0 || rec.status === 'scrapped') { cls += " scrapped-card"; timeLabel = "已報廢"; }
-                            else if (rec.expire <= now) { cls += " expired-card"; }
-                            else if (rec.expire - now <= 86400000) { cls += " warning-card"; }
-                        }
-                        html += `<div class="${cls}" onclick="openDetail('${item.name}','${uid}')">
-                                    <div class="food-name">${item.name}</div>
-                                    <div class="time-label">止：${timeLabel}</div>
-                                 </div>`;
-                    });
-                }
-                html += `</div>`;
-            }
-            display.innerHTML = html;
-        }
-
-        function viewUserReport(uid) {
-            document.getElementById('mon-choice-overlay').style.display = 'none';
-            currentUserID = uid;
-            currentReportMode = 'stability'; 
-            showReport(document.getElementById('report-nav-btn'));
-            showToast(`正在查看 ${usersData[uid]?.name || uid} 的紀錄報告`);
-        }
-
-        // --- 其餘功能 ---
+        function openMonitorChoice(uid, name) { document.getElementById('mon-choice-name').innerText = name; document.getElementById('mon-btn-sum').onclick = () => viewUserSummary(uid); document.getElementById('mon-btn-rep').onclick = () => viewUserReport(uid); document.getElementById('mon-choice-overlay').style.display = 'flex'; }
+        function viewUserSummary(uid) { document.getElementById('mon-choice-overlay').style.display = 'none'; currentUserID = uid; const display = document.getElementById('content-display'); const now = new Date().getTime(); let html = `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;"><h2>📋 ${usersData[uid]?.name || uid} - 品項狀態總覽</h2><button onclick="renderMonitorList()" style="padding:10px 20px; border-radius:10px; background:#f1f5f9; border:1px solid #e2e8f0; cursor:pointer; font-weight:bold;">返回監控清單</button></div>`; const cats = { purchase: '進貨', thaw: '解凍', open: '開封', process: '製備' }; for(let k in cats) { html += `<div style="background:#fff; padding:10px; border-radius:10px; margin-top:15px; font-weight:bold; border-bottom: 2px solid #e2e8f0;">${cats[k]}</div><div class="card-container" style="margin-top:10px;">`; for(let g in structure[k]) { (structure[k][g] || []).forEach(item => { const recs = allRecords[uid]?.[item.name], rec = (recs && recs.length > 0) ? recs[recs.length-1] : null; let cls = "food-item-card" + (rec ? " active-card" : ""); let timeLabel = rec ? fmt(rec.expire) : "--/-- --:--"; if (rec) { if (rec.expire === 0 || rec.status === 'scrapped') { cls += " scrapped-card"; timeLabel = "已報廢"; } else if (rec.expire <= now) { cls += " expired-card"; } else if (rec.expire - now <= 86400000) { cls += " warning-card"; } } html += `<div class="${cls}" onclick="openDetail('${item.name}','${uid}')"><div class="food-name">${item.name}</div><div class="time-label">止：${timeLabel}</div></div>`; }); } html += `</div>`; } display.innerHTML = html; }
+        function viewUserReport(uid) { document.getElementById('mon-choice-overlay').style.display = 'none'; currentUserID = uid; currentReportMode = 'stability'; showReport(document.getElementById('report-nav-btn')); showToast(`正在查看 ${usersData[uid]?.name || uid} 的紀錄報告`); }
 
         function saveDailyNote(dStr, text) { if(!allRecords[currentUserID].dailyNotes) allRecords[currentUserID].dailyNotes = {}; allRecords[currentUserID].dailyNotes[dStr] = text; clearTimeout(window.saveNoteTimer); window.saveNoteTimer = setTimeout(() => { syncToCloud(); }, 1000); }
         function showAdmin(btn) { document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); renderAdminContent(); }
@@ -809,7 +519,6 @@
         function moveItem(cat, group, idx, dir) { const list = structure[cat][group]; const target = idx + dir; if (target < 0 || target >= list.length) return; [list[idx], list[target]] = [list[target], list[idx]]; syncToCloud(); }
         function addItem(c,g){ const n=document.getElementById(`in-${c}-${g}`).value, t=document.getElementById(`tm-${c}-${g}`).value, u=document.getElementById(`un-${c}-${g}`).value, d=document.getElementById(`ck-${c}-${g}`).checked; if(!n||!t)return; if(!structure[c]) structure[c] = {}; if(!structure[c][g]) structure[c][g] = []; structure[c][g].push({name:n, time:parseInt(t), unit:u, useDate:d}); syncToCloud(); showToast("已新增品項"); }
         function delItem(c,g,i){ if(confirm('確認刪除？')){ structure[c][g].splice(i,1); syncToCloud(); } }
-        function syncToCloud(){ db.collection("stores").doc(currentStoreDoc).set({structure, records:allRecords}); }
         function undo(n){ allRecords[currentUserID][n].pop(); syncToCloud(); }
         function delRec(n){ if(confirm('確認清空該品項紀錄？')){ delete allRecords[currentUserID][n]; syncToCloud(); } }
         function closeDetail(){ clearInterval(window.detailTimer); document.getElementById('detail-overlay').style.display = 'none'; }
