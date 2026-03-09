@@ -350,7 +350,7 @@
         function renderAuth() { 
             const display = document.getElementById('content-display'); 
             const searchVal = document.getElementById('auth-search-input')?.value || ""; 
-            display.innerHTML = `
+            let html = `
                 <h2>🔑 帳號與權限設定</h2>
                 <div class="admin-section">
                     <h3>👤 新增 / 修改帳號</h3>
@@ -374,8 +374,62 @@
                     <div id="auth-list-container"></div>
                 </div>
             `; 
+
+            // --- 新增：清理按鈕 (僅開發者可見) ---
+            if (currentUserRole === 'developer') {
+                html += `
+                    <div class="admin-section" style="border: 2px solid #ef4444;">
+                        <h3 style="color:#ef4444;">⚙️ 系統數據維護 (開發者限定)</h3>
+                        <p style="font-size:14px; color:#64748b;">清理範圍：所有帳號中，日期早於「上上個月第一天」的歷史紀錄資料。此操作不可逆。</p>
+                        <button onclick="cleanOldRecords()" style="background:#ef4444; color:white; padding:12px 25px; border:none; border-radius:10px; cursor:pointer; font-weight:bold;">✨ 清理上上個月之前的所有紀錄資料</button>
+                    </div>
+                `;
+            }
+
+            display.innerHTML = html;
             document.getElementById('auth-search-input').addEventListener('input', (e) => { updateAuthUI(e.target.value); }); 
             updateAuthUI(searchVal); 
+        }
+
+        // --- 新增：清理功能邏輯 ---
+        function cleanOldRecords() {
+            if (!confirm("確認要清理上上個月之前的所有紀錄嗎？\n這將永久移除舊數據以維持系統速度。")) return;
+
+            const now = new Date();
+            // 計算上上個月的第一天 (例如現在 3/9，上上個月是 1/1)
+            const cutoffDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+            const cutoffTs = cutoffDate.getTime();
+
+            let totalDeleted = 0;
+            for (let uid in allRecords) {
+                for (let itemName in allRecords[uid]) {
+                    if (itemName === 'dailyNotes') {
+                        // 清理當日備註
+                        for (let dateStr in allRecords[uid].dailyNotes) {
+                            if (new Date(dateStr).getTime() < cutoffTs) {
+                                delete allRecords[uid].dailyNotes[dateStr];
+                                totalDeleted++;
+                            }
+                        }
+                    } else {
+                        // 清理品項紀錄
+                        const beforeCount = allRecords[uid][itemName].length;
+                        allRecords[uid][itemName] = allRecords[uid][itemName].filter(r => r.start >= cutoffTs);
+                        totalDeleted += (beforeCount - allRecords[uid][itemName].length);
+                    }
+                }
+            }
+
+            // 同步回 Firestore (使用 set 覆蓋全紀錄，因為異動範圍跨帳號)
+            db.collection("stores").doc(currentStoreDoc).set({structure, records: allRecords}, {merge: true})
+                .then(() => {
+                    showToast(`清理完成！共移除 ${totalDeleted} 筆舊數據`);
+                    refreshCurrentUI();
+                })
+                .catch(err => {
+                    console.error("清理失敗", err);
+                    alert("清理失敗: " + err.message);
+                });
         }
 
         function updateAuthUI(filter) { 
