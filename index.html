@@ -245,14 +245,19 @@
             }
         }
 
-        async function printViaBluetooth(text) {
+        // 修改此處：移除多餘換行，精確控制張數
+        async function printViaBluetooth(text, count) {
             if (!printerCharacteristic) return;
             try {
                 let encoder = new TextEncoder();
-                let data = encoder.encode(text + '\n\n\n');
-                await printerCharacteristic.writeValue(data);
+                // 每個標籤任務只傳送指定的文字內容，結尾給一個換行，而非多個 \n\n\n
+                // 透過迴圈達成紀錄幾份就出幾份
+                for (let i = 0; i < count; i++) {
+                    let data = encoder.encode(text + '\n');
+                    await printerCharacteristic.writeValue(data);
+                }
             } catch (err) {
-                console.error('列印失敗', err);
+                console.error('藍牙列印失敗', err);
             }
         }
 
@@ -466,34 +471,37 @@
         function processScrap() { const now = new Date().getTime(); if(!allRecords[currentUserID]) allRecords[currentUserID] = {}; if(!allRecords[currentUserID][currentSelecting.name]) allRecords[currentUserID][currentSelecting.name] = []; for(let i=0; i<currentQty; i++) { allRecords[currentUserID][currentSelecting.name].push({ start: now, expire: 0, qty: 1, status: 'scrapped', cat: currentCategory }); } syncToCloud(); closeModal(); showToast(`已報廢 ${currentQty} 筆`); }
         function saveRecord(name, h, count) { const now = new Date().getTime(); const expireTime = now + h * 3600000; if(!allRecords[currentUserID]) allRecords[currentUserID] = {}; if(!allRecords[currentUserID][name]) allRecords[currentUserID][name] = []; for(let i=0; i<count; i++) { allRecords[currentUserID][name].push({ start: now, expire: expireTime, qty: 1, cat: currentCategory }); } syncToCloud(); closeModal(); showToast(`已紀錄 ${count} 筆`); }
         
-        // --- 僅修改此部分的列印內容格式 ---
+        // 核心修改點：移除 window.open (因為在 iPad Bluefy 會導致多餘操作)，全面改用藍牙背景自動出單
         function printLabel(itemName, customExpireDate, count) { 
             const now = new Date(); 
             let expDate = new Date(); 
             if (customExpireDate) { expDate = customExpireDate; } else { let ms = currentSelecting.time * (currentSelecting.unit === 'hour' ? 3600000 : (currentSelecting.unit === 'day' ? 86400000 : 2592000000)); expDate = new Date(now.getTime() + ms); } 
             const catName = categoryMap[currentCategory] || ''; 
-            
-            // 格式化時間：年/月/日/時:分
             const formatTime = (d) => `${d.getFullYear()}/${(d.getMonth()+1).toString().padStart(2,'0')}/${d.getDate().toString().padStart(2,'0')} ${d.getHours()}:${d.getMinutes().toString().padStart(2,'0')}`;
             const dateStr = formatTime(now);
             const expStr = formatTime(expDate);
-            
-            // 視窗列印樣式
-            const printWindow = window.open('', '', 'height=300,width=220'); 
-            printWindow.document.write('<html><head><title>Label</title><style>body{font-family:sans-serif; text-align:left; padding:0; margin:10px; width:180px; font-size:14px; line-height:1.4;} .label-item{margin-bottom: 2px; font-weight:bold; word-break:break-all;}</style></head><body>'); 
-            for(let i=0; i<count; i++) { 
-                printWindow.document.write(`
-                    <div style="page-break-after: always; padding-bottom: 20px;">
-                        <div class="label-item">${catName}</div>
-                        <div class="label-item">${itemName}</div>
-                        <div class="label-item">操作時間 ${dateStr}</div>
-                        <div class="label-item">有效日期 ${expStr}</div>
-                    </div>`); 
-                if(printerCharacteristic) printViaBluetooth(`${catName}\n${itemName}\n操作時間 ${dateStr}\n有效日期 ${expStr}`);
-            } 
-            printWindow.document.write('</body></html>'); 
-            printWindow.document.close(); 
-            setTimeout(() => { printWindow.print(); printWindow.close(); }, 300); 
+
+            // 僅在有藍牙連線時執行出單
+            if(printerCharacteristic) {
+                // 將內容傳入藍牙，傳入 count 參數控制張數，移除彈窗
+                printViaBluetooth(`${catName}\n${itemName}\n操作時間 ${dateStr}\n有效日期 ${expStr}`, count);
+            } else {
+                // 若無藍牙，維持彈窗備案，但優化換頁邏輯防止多一張
+                const printWindow = window.open('', '', 'height=300,width=220'); 
+                printWindow.document.write('<html><head><title>Label</title><style>@page{margin:0;} body{font-family:sans-serif; text-align:left; padding:0; margin:5px; width:180px; font-size:14px; line-height:1.4;} .label-item{margin-bottom: 2px; font-weight:bold; word-break:break-all;} .page-item{page-break-after: always;} .page-item:last-child{page-break-after: avoid;}</style></head><body>'); 
+                for(let i=0; i<count; i++) { 
+                    printWindow.document.write(`
+                        <div class="page-item">
+                            <div class="label-item">${catName}</div>
+                            <div class="label-item">${itemName}</div>
+                            <div class="label-item">操作時間 ${dateStr}</div>
+                            <div class="label-item">有效日期 ${expStr}</div>
+                        </div>`); 
+                } 
+                printWindow.document.write('</body></html>'); 
+                printWindow.document.close(); 
+                setTimeout(() => { printWindow.print(); printWindow.close(); }, 300); 
+            }
         }
 
         function renderSummary(btn) { document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); document.getElementById('sub-nav-bar').style.display = 'none'; const display = document.getElementById('content-display'); const now = new Date().getTime(); let html = `<h2>📊 我的操作總覽</h2>`; const cats = { purchase: '進貨', thaw: '解凍', open: '開封', process: '製備' }; for(let k in cats) { html += `<div style="background:#fff; padding:10px; border-radius:10px; margin-top:15px; font-weight:bold; border-bottom: 2px solid #e2e8f0;">${k==='purchase'?'🚚':k==='thaw'?'❄️':k==='open'?'📦':'🍳'} ${cats[k]}</div><div class="card-container" style="margin-top:10px;">`; for(let g in structure[k]) { (structure[k][g] || []).forEach(item => { const recs = allRecords[currentUserID]?.[item.name], rec = (recs && recs.length > 0) ? recs[recs.length-1] : null; let cls = "food-item-card" + (rec ? " active-card" : ""); let timeLabel = rec ? fmt(rec.expire) : "--/-- --:--"; if (rec) { if (rec.expire === 0 || rec.status === 'scrapped') { cls += " scrapped-card"; timeLabel = "品項已報廢"; } else if (rec.expire <= now) { cls += " expired-card"; } else if (rec.expire - now <= 86400000) { cls += " warning-card"; } } html += `<div class="${cls}" onclick="openDetail('${item.name}','${currentUserID}')"><div class="food-name">${item.name}</div><div class="time-label">止：${timeLabel}</div><div class="card-ops" onclick="event.stopPropagation()">${rec ? `<button class="mini-op-btn btn-undo" onclick="undo('${item.name}')">復</button><button class="mini-op-btn btn-del" onclick="delRec('${item.name}')">清</button>` : ""}</div></div>`; }); } html += `</div>`; } display.innerHTML = html; }
@@ -509,7 +517,75 @@
 
         function renderStabilitySection() { const body = document.getElementById('report-main-body'); const myRecs = allRecords[currentUserID] || {}; let totalItemsCount = 0; for(let c in structure) for(let g in structure[c]) totalItemsCount += structure[c][g].length; const today = new Date(); const todayStr = today.toISOString().split('T')[0]; const hourLabels = []; for(let h=8; h<=22; h++) hourLabels.push(`${h}:00`); let calendarDays = []; let startOfCalendar = new Date(); startOfCalendar.setDate(today.getDate() - 27); let dayOfWeek = startOfCalendar.getDay(); let diffToMonday = (dayOfWeek === 0 ? 6 : dayOfWeek - 1); startOfCalendar.setDate(startOfCalendar.getDate() - diffToMonday); window.stabilityLines = []; for(let i=0; i<35; i++) { const d = new Date(startOfCalendar); d.setDate(startOfCalendar.getDate() + i); const dStr = d.toISOString().split('T')[0]; const dLabel = `${d.getMonth() + 1}/${d.getDate()}`; let dayLogs = [], dayUniqueItems = new Set(), hourlyItemSets = Array.from({length: 15}, () => new Set()); for(let n in myRecs) { if(n === 'dailyNotes') continue; const matched = (myRecs[n] || []).filter(r => new Date(r.start).toISOString().split('T')[0] === dStr); if(matched.length > 0) { matched.forEach(m => { dayLogs.push({ ...m, name: n }); const hr = new Date(m.start).getHours(); if(hr >= 8 && hr <= 22) hourlyItemSets[hr-8].add(n); }); dayUniqueItems.add(n); } } const hourlyCounts = hourlyItemSets.map(set => set.size); let statusCls = ""; if (dStr <= todayStr) { let hasBurst = false; const sorted = dayLogs.sort((a,b) => a.start - b.start); for(let k=0; k<sorted.length; k++){ const window = sorted.filter(r => r.start >= sorted[k].start && r.start <= sorted[k].start + 300000); if(new Set(window.map(r => r.name)).size > 10) { hasBurst = true; break; } } let prev7 = []; for(let j=1; j<=7; j++){ let pd = new Date(dStr); pd.setDate(pd.getDate()-j); let pdStr = pd.toISOString().split('T')[0]; let c = 0; for(let n in myRecs) { if(n !== 'dailyNotes') c += (myRecs[n] || []).filter(r => new Date(r.start).toISOString().split('T')[0] === pdStr).length; } prev7.push(c); } const m7 = prev7.reduce((a,b)=>a+b,0)/7; const s7 = Math.sqrt(prev7.map(x=>Math.pow(x-m7,2)).reduce((a,b)=>a+b,0)/7) || 0.1; const coverage = totalItemsCount > 0 ? (dayUniqueItems.size / totalItemsCount) : 0; if (hasBurst || Math.abs(dayLogs.length - m7) > (2 * s7) || coverage < 0.3) statusCls = "day-error"; else if (Math.abs(dayLogs.length - m7) > (1.5 * s7) || (dayLogs.length > 0 && coverage < 0.5)) statusCls = "day-low"; else if (dayLogs.length > 0) statusCls = "day-stable"; } if (dayLogs.length > 0) { window.stabilityLines.push({ label: dStr, data: hourlyCounts, borderColor: dStr === selectedStabilityDate ? '#2980b9' : 'rgba(200, 200, 200, 0.4)', borderWidth: dStr === selectedStabilityDate ? 3 : 1, pointRadius: dStr === selectedStabilityDate ? 4 : 0, tension: 0.3, order: dStr === selectedStabilityDate ? 0 : 1 }); } calendarDays.push({ full: dStr, label: dLabel, count: dayLogs.length, statusCls }); } body.innerHTML = `<div class="report-left"><div class="admin-section"><h3>⏰ 時段紀錄密度 (品項數對比)</h3><div style="height: 220px; margin-bottom: 25px; background: #fff; padding: 10px; border-radius: 12px; border: 1px solid #f1f5f9;"><canvas id="stabilityTrendChart"></canvas></div><div class="weekday-header"><div>一</div><div>二</div><div>三</div><div>四</div><div>五</div><div>六</div><div>日</div></div><div class="stability-grid" id="stability-calendar-grid">${calendarDays.map(d => `<div class="day-cell ${d.statusCls} ${selectedStabilityDate===d.full?'selected-day':''}" onclick="selectStabilityDate(event, '${d.full}')"><b>${d.count}</b><span style="font-size:9px;">${d.label}</span></div>`).join('')}</div><div style="font-size:11px; color:#94a3b8; margin-top:10px; display:flex; gap:15px; justify-content:center;"><span><i style="background:#d1fae5; border:1px solid #10b981; width:10px; height:10px; display:inline-block;"></i> 穩定</span><span><i style="background:#fef3c7; border:1px solid #f59e0b; width:10px; height:10px; display:inline-block;"></i> 偏低</span><span><i style="background:#fee2e2; border:1px solid #ef4444; width:10px; height:10px; display:inline-block;"></i> 異常</span></div></div></div><div class="report-right" id="stability-detail-panel"></div>`; const ctx = document.getElementById('stabilityTrendChart').getContext('2d'); if(stabilityTrendChart) stabilityTrendChart.destroy(); stabilityTrendChart = new Chart(ctx, { type: 'line', data: { labels: hourLabels, datasets: window.stabilityLines }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { filter: (item) => item.dataset.order === 0 } }, scales: { y: { beginAtZero: true, min: 0, max: 15, ticks: { stepSize: 3 } } } } }); renderStabilityDetail(selectedStabilityDate); }
         function selectStabilityDate(event, dStr) { if(event) event.preventDefault(); selectedStabilityDate = dStr; document.querySelectorAll('#stability-calendar-grid .day-cell').forEach(cell => cell.classList.remove('selected-day')); const target = event.currentTarget; if(target) target.classList.add('selected-day'); if(stabilityTrendChart) { stabilityTrendChart.data.datasets.forEach(ds => { const isSelected = ds.label === dStr; ds.borderWidth = isSelected ? 3 : 1; ds.borderColor = isSelected ? '#2980b9' : 'rgba(200, 200, 200, 0.4)'; ds.pointRadius = isSelected ? 4 : 0; ds.order = isSelected ? 0 : 1; }); stabilityTrendChart.update('none'); } renderStabilityDetail(dStr); }
-        function renderStabilityDetail(dStr) { const panel = document.getElementById('stability-detail-panel'); const myRecs = allRecords[currentUserID] || {}; let logs = []; let dayUnique = new Set(); for(let n in myRecs) { if(n === 'dailyNotes') continue; (myRecs[n] || []).forEach(r => { if(new Date(r.start).toISOString().split('T')[0] === dStr) { logs.push({ name: n, time: r.start, cat: r.cat }); dayUnique.add(n); } }); } logs.sort((a,b) => a.time - b.time); let totalItemsCount = 0; for(let c in structure) for(let g in structure[c]) totalItemsCount += structure[c][g].length; let prev7Counts = []; let prev7Coverages = []; for(let i=1; i<=7; i++) { let td = new Date(dStr); td.setDate(td.getDate()-i); let ts = td.toISOString().split('T')[0]; let c = 0; let u = new Set(); for(let n in myRecs) { if(n === 'dailyNotes') continue; const matched = (myRecs[n] || []).filter(r => new Date(r.start).toISOString().split('T')[0] === ts); if(matched.length > 0) { c += matched.length; u.add(n); } } prev7Counts.push(c); prev7Coverages.push(u.size / (totalItemsCount || 1)); } const avg7Count = prev7Counts.reduce((a,b)=>a+b,0)/7; const avg7Cov = prev7Coverages.reduce((a,b)=>a+b,0)/7; const currentCov = totalItemsCount > 0 ? (dayUnique.size / totalItemsCount) : 0; let suggestions = []; let hasBurst = false; const sorted = logs.sort((a,b) => a.time - b.time); for(let k=0; k<sorted.length; k++){ const win = sorted.filter(r => r.time >= sorted[k].time && r.time <= sorted[k].time + 300000); if(new Set(win.map(r => r.name)).size > 10) { hasBurst = true; break; } } if (logs.length === 0) { suggestions.push({title: "⚠️ 今日尚未紀錄", text: "尚未偵測到任何操作紀錄，請確認是否漏傳或尚未開始作業。", type: "error"}); } else { if (hasBurst) suggestions.push({title: "❗ 偵測到補登行為", text: "今日有短時間內大量連續紀錄的現象，建議作業當下立即完成。", type: "error"}); if (currentCov < 0.4) suggestions.push({title: "❗ 品項覆蓋率低", text: `今日僅追蹤了 ${(currentCov*100).toFixed(0)}% 的食材，明顯低於平均。`, type: "low"}); if (Math.abs(logs.length - avg7Count) > 20) suggestions.push({title: "❓ 總量波動異常", text: `今日紀錄筆數 (${logs.length}筆) 與平均 (${avg7Count.toFixed(1)}筆) 差異過大。`, type: "low"}); if (suggestions.length === 0) suggestions.push({title: "✅ 操作狀況良好", text: "今日紀錄節奏穩定，涵蓋品項齊全，請繼續保持。", type: "stable"}); } panel.innerHTML = `<h3>📅 ${dStr} 分析報告</h3><div style="display:flex; gap:10px; margin-bottom:15px;"><div style="flex:1; background:#f8fafc; padding:10px; border-radius:10px; text-align:center; border:1px solid #e2e8f0;"><div style="font-size:11px; color:#64748b;">今日/近7日平均記錄筆數</div><div style="font-size:18px; font-weight:bold;">${logs.length} <small style="font-size:12px; font-weight:normal; color:#94a3b8;">/ ${avg7Count.toFixed(1)}</small></div></div><div style="flex:1; background:#f8fafc; padding:10px; border-radius:10px; text-align:center; border:1px solid #e2e8f0;"><div style="font-size:11px; color:#64748b;">今日/近7日平均覆蓋率</div><div style="font-size:18px; font-weight:bold;">${(currentCov * 100).toFixed(0)}% <small style="font-size:12px; font-weight:normal; color:#94a3b8;">/ ${(avg7Cov * 100).toFixed(0)}%</small></div></div></div><div id="stability-suggestions-list" style="max-height: 180px; overflow-y: auto; padding-right: 5px; margin-bottom: 10px;">${suggestions.map(s => `<div class="alert-box" style="background:${s.type==='stable'?'#f0fdf4':(s.type==='error'?'#fff5f5':'#ffffff')}; border:1px solid ${s.type==='stable'?'#bbf7d0':(s.type==='error'?'#fecaca':'#e2e8f0')}; color:${s.type==='stable'?'#166534':(s.type==='error'?'#991b1b':'#475569')}; margin-bottom:10px;"><div style="font-weight:bold; margin-bottom:3px;">${s.title}</div><div style="font-size:12px; opacity:0.9;">${s.text}</div></div>`).join('')}</div><div class="daily-note-area" style="margin-top: 5px; padding-top: 10px;"><div style="font-size:13px; font-weight:bold; color:#475569; margin-bottom:5px;">📝 當日備註</div><textarea id="daily-note-input" class="daily-note-input" style="height: 60px;" placeholder="若有特殊情況請註記..." oninput="saveDailyNote('${dStr}', this.value)">${(allRecords[currentUserID]?.dailyNotes?.[dStr]) || ""}</textarea></div><div style="margin-top:15px; border-top:1px solid #eee; padding-top:10px; flex: 1; overflow: hidden; display: flex; flex-direction: column; min-height: 120px;"><div style="font-size:12px; color:#94a3b8; margin-bottom:5px;">操作流水帳 (可滑動)：</div><div style="flex: 1; overflow-y: auto; background: #fcfcfc; border-radius: 8px; border: 1px solid #f1f5f9;"><table class="stat-table">${logs.map(l => `<tr><td width="30%">${new Date(l.time).getHours()}:${new Date(l.time).getMinutes().toString().padStart(2,'0')}</td><td><b>[${categoryMap[l.cat]}]</b> ${l.name}</td></tr>`).join('') || '<tr><td colspan="2" style="text-align:center; color:#ccc; padding:20px;">無明細</td></tr>'}</table></div></div>`; }
+        
+        function renderStabilityDetail(dStr) { 
+            const panel = document.getElementById('stability-detail-panel'); 
+            const myRecs = allRecords[currentUserID] || {}; 
+            let logs = []; 
+            let dayUnique = new Set(); 
+            for(let n in myRecs) { 
+                if(n === 'dailyNotes') continue; 
+                (myRecs[n] || []).forEach(r => { 
+                    if(new Date(r.start).toISOString().split('T')[0] === dStr) { 
+                        logs.push({ name: n, time: r.start, cat: r.cat }); 
+                        dayUnique.add(n); 
+                    } 
+                }); 
+            } 
+            logs.sort((a,b) => a.time - b.time); 
+            let totalItemsCount = 0; for(let c in structure) for(let g in structure[c]) totalItemsCount += structure[c][g].length; 
+            
+            let prev7Counts = []; let prev7Coverages = []; 
+            for(let i=1; i<=7; i++) { 
+                let td = new Date(dStr); td.setDate(td.getDate()-i); 
+                let ts = td.toISOString().split('T')[0]; 
+                let c = 0; let u = new Set(); 
+                for(let n in myRecs) { 
+                    if(n === 'dailyNotes') continue; 
+                    const matched = (myRecs[n] || []).filter(r => new Date(r.start).toISOString().split('T')[0] === ts); 
+                    if(matched.length > 0) { c += matched.length; u.add(n); } 
+                } 
+                prev7Counts.push(c); 
+                prev7Coverages.push(u.size / (totalItemsCount || 1)); 
+            } 
+            
+            const avg7Count = prev7Counts.reduce((a,b)=>a+b,0)/7; 
+            const s7 = Math.sqrt(prev7Counts.map(x=>Math.pow(x-avg7Count,2)).reduce((a,b)=>a+b,0)/7) || 0.1;
+            const avg7Cov = prev7Coverages.reduce((a,b)=>a+b,0)/7; 
+            const currentCov = totalItemsCount > 0 ? (dayUnique.size / totalItemsCount) : 0; 
+            
+            let suggestions = []; 
+            let hasBurst = false; 
+            const sorted = logs.sort((a,b) => a.time - b.time); 
+            for(let k=0; k<sorted.length; k++){ 
+                const win = sorted.filter(r => r.time >= sorted[k].time && r.time <= sorted[k].time + 300000); 
+                if(new Set(win.map(r => r.name)).size > 10) { hasBurst = true; break; } 
+            } 
+
+            if (logs.length === 0) { 
+                suggestions.push({title: "⚠️ 今日尚未紀錄", text: "尚未偵測到任何操作紀錄，請確認是否漏傳或尚未開始作業。", type: "error"}); 
+            } else { 
+                if (hasBurst) {
+                    suggestions.push({title: "❗ 偵測到補登行為", text: "今日有短時間內大量連續紀錄的現象，這會導致紅色標註，建議隨手紀錄。", type: "error"}); 
+                }
+                const diff = Math.abs(logs.length - avg7Count);
+                if (diff > (2 * s7)) {
+                    suggestions.push({title: "❓ 總量嚴重異常", text: `今日筆數 (${logs.length}) 與平均落差過大（超過 2 倍標準差），請確認有無漏掃。`, type: "error"});
+                } else if (diff > (1.5 * s7)) {
+                    suggestions.push({title: "❓ 總量偏離平均值", text: `筆數波動較明顯，請注意紀錄的完整性。`, type: "low"});
+                }
+                if (currentCov < 0.3) { 
+                    suggestions.push({title: "❗ 覆蓋率嚴重不足", text: `覆蓋率低於 30%，大部分品項未被追蹤，請確認作業標準。`, type: "error"}); 
+                } else if (currentCov < 0.5) {
+                    suggestions.push({title: "❗ 覆蓋率偏低", text: `今日追蹤了 ${(currentCov*100).toFixed(0)}% 的食材，低於穩定標準 (50%)。`, type: "low"}); 
+                }
+                if (suggestions.length === 0) {
+                    suggestions.push({title: "✅ 操作狀況良好", text: "今日紀錄節奏與數量皆在穩定區間，品項涵蓋齊全，請保持。", type: "stable"}); 
+                }
+            } 
+            
+            panel.innerHTML = `<h3>📅 ${dStr} 分析報告</h3><div style="display:flex; gap:10px; margin-bottom:15px;"><div style="flex:1; background:#f8fafc; padding:10px; border-radius:10px; text-align:center; border:1px solid #e2e8f0;"><div style="font-size:11px; color:#64748b;">今日/近7日平均記錄筆數</div><div style="font-size:18px; font-weight:bold;">${logs.length} <small style="font-size:12px; font-weight:normal; color:#94a3b8;">/ ${avg7Count.toFixed(1)}</small></div></div><div style="flex:1; background:#f8fafc; padding:10px; border-radius:10px; text-align:center; border:1px solid #e2e8f0;"><div style="font-size:11px; color:#64748b;">今日/近7日平均覆蓋率</div><div style="font-size:18px; font-weight:bold;">${(currentCov * 100).toFixed(0)}% <small style="font-size:12px; font-weight:normal; color:#94a3b8;">/ ${(avg7Cov * 100).toFixed(0)}%</small></div></div></div><div id="stability-suggestions-list" style="max-height: 180px; overflow-y: auto; padding-right: 5px; margin-bottom: 10px;">${suggestions.map(s => `<div class="alert-box" style="background:${s.type==='stable'?'#f0fdf4':(s.type==='error'?'#fff5f5':'#ffffff')}; border:1px solid ${s.type==='stable'?'#bbf7d0':(s.type==='error'?'#fecaca':'#e2e8f0')}; color:${s.type==='stable'?'#166534':(s.type==='error'?'#991b1b':'#475569')}; margin-bottom:10px;"><div style="font-weight:bold; margin-bottom:3px;">${s.title}</div><div style="font-size:12px; opacity:0.9;">${s.text}</div></div>`).join('')}</div><div class="daily-note-area" style="margin-top: 5px; padding-top: 10px;"><div style="font-size:13px; font-weight:bold; color:#475569; margin-bottom:5px;">📝 當日備註</div><textarea id="daily-note-input" class="daily-note-input" style="height: 60px;" placeholder="若有特殊情況請註記..." oninput="saveDailyNote('${dStr}', this.value)">${(allRecords[currentUserID]?.dailyNotes?.[dStr]) || ""}</textarea></div><div style="margin-top:15px; border-top:1px solid #eee; padding-top:10px; flex: 1; overflow: hidden; display: flex; flex-direction: column; min-height: 120px;"><div style="font-size:12px; color:#94a3b8; margin-bottom:5px;">操作流水帳 (可滑動)：</div><div style="flex: 1; overflow-y: auto; background: #fcfcfc; border-radius: 8px; border: 1px solid #f1f5f9;"><table class="stat-table">${logs.map(l => `<tr><td width="30%">${new Date(l.time).getHours()}:${new Date(l.time).getMinutes().toString().padStart(2,'0')}</td><td><b>[${categoryMap[l.cat]}]</b> ${l.name}</td></tr>`).join('') || '<tr><td colspan="2" style="text-align:center; color:#ccc; padding:20px;">無明細</td></tr>'}</table></div></div>`; 
+        }
 
         function showMonitor(btn) { document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); document.getElementById('sub-nav-bar').style.display = 'none'; renderMonitorList(); }
         function renderMonitorList() { const searchVal = document.getElementById('mon-search-input')?.value || ""; document.getElementById('content-display').innerHTML = `<div style="display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:20px;"><div><h2 style="margin:0;">👁️ 全員監控總覽</h2><p style="margin:5px 0 0 0; color:#64748b; font-size:14px;">顏色異常越多的帳號將自動排在上方</p></div><input type="text" id="mon-search-input" class="input-box" style="width:250px;" placeholder="🔍 搜尋名稱..." value="${searchVal}"></div><div id="mon-list-container" class="mon-grid"></div>`; document.getElementById('mon-search-input').addEventListener('input', (e) => { updateMonitorUI(e.target.value); }); updateMonitorUI(searchVal); }
