@@ -286,21 +286,26 @@
                 const text = document.getElementById('status-text');
                 text.innerText = '正在尋找藍牙設備...';
                 
+                // 修正 A: 採用更通用的搜尋方式，不強制限制 Service UUID，並遍歷所有服務
                 bluetoothDevice = await navigator.bluetooth.requestDevice({
-                    acceptAllDevices: true,
-                    optionalServices: ['000018f0-0000-1000-8000-00805f9b34fb', '49535441-522d-5052-494e-544552534552']
+                    acceptAllDevices: true
                 });
                 
                 const server = await bluetoothDevice.gatt.connect();
                 const services = await server.getPrimaryServices();
                 
                 for (let service of services) {
-                    const characteristics = await service.getCharacteristics();
-                    for (let char of characteristics) {
-                        if (char.properties.write || char.properties.writeWithoutResponse) {
-                            printerCharacteristic = char;
-                            break;
+                    try {
+                        const characteristics = await service.getCharacteristics();
+                        for (let char of characteristics) {
+                            // 尋找具有寫入權限的 Characteristic
+                            if (char.properties.write || char.properties.writeWithoutResponse) {
+                                printerCharacteristic = char;
+                                break;
+                            }
                         }
+                    } catch (e) {
+                        console.log("跳過不支援的服務");
                     }
                     if (printerCharacteristic) break;
                 }
@@ -309,10 +314,13 @@
                     light.className = 'status-light connected';
                     text.innerText = '藍牙出單機已連線';
                     showToast('出單機連接成功');
+                } else {
+                    throw new Error("找不到可寫入的服務");
                 }
             } catch (err) {
                 console.error(err);
                 showToast('藍牙連線失敗: ' + err.message);
+                document.getElementById('status-text').innerText = '點擊連接藍牙出單機';
             }
         }
 
@@ -320,8 +328,13 @@
             if (!printerCharacteristic) return;
             try {
                 let encoder = new TextEncoder();
+                
+                // 修正 B: 增加 ESC/POS 初始化指令 (ESC @)，確保印表機狀態正確
+                const initCmd = new Uint8Array([0x1B, 0x40]);
+                await printerCharacteristic.writeValue(initCmd);
+
                 for (let i = 0; i < count; i++) {
-                    let data = encoder.encode(text + '\n');
+                    let data = encoder.encode(text + '\n\n\n'); // 增加換行確保出紙
                     await printerCharacteristic.writeValue(data);
                 }
             } catch (err) {
