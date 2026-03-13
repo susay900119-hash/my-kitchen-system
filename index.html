@@ -365,25 +365,41 @@
         function clearQtyBtns() { document.querySelectorAll('.qty-btn').forEach(b => b.classList.remove('active')); currentQty = parseInt(document.getElementById('qty-input').value) || 1; }
         
         function loadStoreData() { 
+            // 1. 監聽結構資料（選單內容）
             db.collection(GLOBAL_CONFIG.paths.store_root).doc(currentStoreDoc).onSnapshot((doc) => { 
-                if (doc.exists) { structure = doc.data().structure || {}; refreshCurrentUI(); } 
+                if (doc.exists) { 
+                    structure = doc.data().structure || {}; 
+                    refreshCurrentUI(); 
+                } 
             }); 
             
+            // 2. 核心修正：正確監聽所有使用者的紀錄並即時存入全域變數
             db.collection(GLOBAL_CONFIG.paths.store_root).doc(currentStoreDoc).collection("users").onSnapshot((snapshot) => {
                 snapshot.forEach(userDoc => {
                     const uid = userDoc.id;
                     const userData = userDoc.data();
+                    
+                    // 初始化該使用者的資料容器
                     if (!allRecords[uid]) allRecords[uid] = {};
                     if (userData.dailyNotes) allRecords[uid].dailyNotes = userData.dailyNotes;
 
+                    // 監聽該使用者底下的 records 子集合
                     userDoc.ref.collection("records").onSnapshot(recSnap => {
-                        const tempUserRecs = {};
+                        // 清除舊資料，避免重複累積
+                        const newUserRecords = {}; 
                         recSnap.forEach(rDoc => {
                             const r = rDoc.data();
-                            if(!tempUserRecs[r.name]) tempUserRecs[r.name] = [];
-                            tempUserRecs[r.name].push(r);
+                            if(!newUserRecords[r.name]) newUserRecords[r.name] = [];
+                            newUserRecords[r.name].push(r);
                         });
-                        allRecords[uid] = { ...allRecords[uid], ...tempUserRecs };
+
+                        // 將最新紀錄完整更新到全域變數中
+                        allRecords[uid] = {
+                            ...allRecords[uid], // 保留 dailyNotes 等其他資訊
+                            ...newUserRecords
+                        };
+                        
+                        // 強制更新目前所在的頁面 UI
                         refreshCurrentUI();
                     });
                 });
