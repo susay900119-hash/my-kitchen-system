@@ -254,7 +254,8 @@
         let usersData = {}, currentStoreDoc = "Dadun", currentUserID = "", currentUserRole = "", structure = {}, allRecords = {}, currentSelecting = null, currentCategory = '', currentAdminTab = 'purchase';
         let currentQty = 1;
         let bluetoothDevice = null, printerCharacteristic = null;
-        
+        let listeners = []; // 用於管理監聽器，避免堆疊
+
         let currentReportMode = 'usage'; 
         let currentReportAction = 'purchase'; 
         let globalSelectedItems = [];
@@ -301,12 +302,24 @@
         async function printViaBluetooth(text, count) {
             if (!printerCharacteristic) return;
             try {
+                // ESC/POS 指令優化
+                const ESC = 0x1B;
+                const GS = 0x1D;
+                const initCmd = new Uint8Array([ESC, 0x40]); // 初始化
+                const fontSizeCmd = new Uint8Array([GS, 0x21, 0x11]); // 倍高倍寬
+                const cutCmd = new Uint8Array([GS, 0x56, 0x42, 0x00]); // 切紙
+                
                 let encoder = new TextEncoder();
-                const initCmd = new Uint8Array([0x1B, 0x40]);
-                await printerCharacteristic.writeValue(initCmd);
                 for (let i = 0; i < count; i++) {
-                    let data = encoder.encode(text + '\n\n\n');
-                    await printerCharacteristic.writeValue(data);
+                    await printerCharacteristic.writeValue(initCmd);
+                    await printerCharacteristic.writeValue(fontSizeCmd);
+                    // 由於 Web Bluetooth MTU 限制，分段傳送文字
+                    let data = encoder.encode(text + '\n\n\n\n');
+                    const chunkSize = 20; 
+                    for (let j = 0; j < data.length; j += chunkSize) {
+                        await printerCharacteristic.writeValue(data.slice(j, j + chunkSize));
+                    }
+                    await printerCharacteristic.writeValue(cutCmd);
                 }
             } catch (err) { console.error('藍牙列印失敗', err); }
         }
@@ -338,25 +351,25 @@
         function clearQtyBtns() { document.querySelectorAll('.qty-btn').forEach(b => b.classList.remove('active')); currentQty = parseInt(document.getElementById('qty-input').value) || 1; }
         
         function loadStoreData() { 
-            // 監聽店鋪結構
-            db.collection(GLOBAL_CONFIG.paths.store_root).doc(currentStoreDoc).onSnapshot((doc) => { 
+            listeners.forEach(unsub => unsub());
+            listeners = [];
+
+            listeners.push(db.collection(GLOBAL_CONFIG.paths.store_root).doc(currentStoreDoc).onSnapshot((doc) => { 
                 if (doc.exists) { structure = doc.data().structure || {}; refreshCurrentUI(); } 
-            }); 
+            })); 
             
-            // 重要修復：正確監聽所有使用者的紀錄子集合
-            db.collection(GLOBAL_CONFIG.paths.store_root).doc(currentStoreDoc).collection("users").onSnapshot((snapshot) => {
+            listeners.push(db.collection(GLOBAL_CONFIG.paths.store_root).doc(currentStoreDoc).collection("users").onSnapshot((snapshot) => {
                 snapshot.forEach(userDoc => {
                     const uid = userDoc.id;
                     const userData = userDoc.data();
                     
-                    // 初始化使用者空間
                     if (!allRecords[uid]) allRecords[uid] = { dailyNotes: {} };
                     if (userData && userData.dailyNotes) {
                         allRecords[uid].dailyNotes = userData.dailyNotes;
                     }
 
-                    // 針對每個使用者的 records 子集合進行監聽
-                    userDoc.ref.collection("records").onSnapshot(recSnap => {
+                    const unsubRecords = userDoc.ref.collection("records").onSnapshot(recSnap => {
+                        // 建立該用戶全新的品項對應表
                         const tempMap = {};
                         recSnap.forEach(rDoc => {
                             const r = rDoc.data();
@@ -364,15 +377,15 @@
                             tempMap[r.name].push(r);
                         });
                         
-                        // 將抓到的紀錄更新回 allRecords，同時保留備註
+                        // 重要：將現有的 note 與剛抓到的 records 合併
                         const currentNotes = allRecords[uid]?.dailyNotes || {};
                         allRecords[uid] = { ...tempMap, dailyNotes: currentNotes };
                         
-                        // 數據更新後刷新畫面
                         refreshCurrentUI();
                     });
+                    listeners.push(unsubRecords);
                 });
-            });
+            }));
         }
         
         function refreshCurrentUI() { 
@@ -388,14 +401,17 @@
 
         function saveRecord(name, h, count) { 
             const now = new Date().getTime(); 
-            const expireTime = now + h * 3600000; 
+            const expireTime = h === 0 ? 0 : now + h * 3600000; 
+            const promises = [];
             for(let i=0; i<count; i++) {
                 const tsId = (now + i).toString();
                 const newRec = { id: tsId, start: now, expire: expireTime, qty: 1, cat: currentCategory, name: name };
-                DataController.saveRecord(newRec).then(() => {
-                    if (i === count - 1) { closeModal(); showToast(`已紀錄 ${count} 筆`); }
-                });
+                promises.push(DataController.saveRecord(newRec));
             }
+            Promise.all(promises).then(() => {
+                closeModal();
+                showToast(`已紀錄 ${count} 筆`);
+            });
         }
 
         function processScrap() { 
@@ -439,10 +455,42 @@
             const formatTime = (d) => `${d.getFullYear()}/${(d.getMonth()+1).toString().padStart(2,'0')}/${d.getDate().toString().padStart(2,'0')} ${d.getHours()}:${d.getMinutes().toString().padStart(2,'0')}`;
             const dateStr = formatTime(now);
             const expStr = formatTime(expDate);
-            if(printerCharacteristic) { printViaBluetooth(`${catName}\n${itemName}\n操作時間 ${dateStr}\n有效日期 ${expStr}`, count); } else { const printWindow = window.open('', '', 'height=300,width=220'); printWindow.document.write('<html><head><title>Label</title><style>@page{margin:0;} body{font-family:sans-serif; text-align:left; padding:0; margin:5px; width:180px; font-size:14px; line-height:1.4;} .label-item{margin-bottom: 2px; font-weight:bold; word-break:break-all;} .page-item{page-break-after: always;} .page-item:last-child{page-break-after: avoid;}</style></head><body>'); for(let i=0; i<count; i++) { printWindow.document.write(`<div class="page-item"><div class="label-item">${catName}</div><div class="label-item">${itemName}</div><div class="label-item">操作時間 ${dateStr}</div><div class="label-item">有效日期 ${expStr}</div></div>`); } printWindow.document.write('</body></html>'); printWindow.document.close(); setTimeout(() => { printWindow.print(); printWindow.close(); }, 300); }
+            const printText = `${catName}\n${itemName}\n操作時間 ${dateStr}\n有效日期 ${expStr}`;
+            if(printerCharacteristic) { printViaBluetooth(printText, count); } else { const printWindow = window.open('', '', 'height=300,width=220'); printWindow.document.write('<html><head><title>Label</title><style>@page{margin:0;} body{font-family:sans-serif; text-align:left; padding:0; margin:5px; width:180px; font-size:14px; line-height:1.4;} .label-item{margin-bottom: 2px; font-weight:bold; word-break:break-all;} .page-item{page-break-after: always;} .page-item:last-child{page-break-after: avoid;}</style></head><body>'); for(let i=0; i<count; i++) { printWindow.document.write(`<div class="page-item"><div class="label-item">${catName}</div><div class="label-item">${itemName}</div><div class="label-item">操作時間 ${dateStr}</div><div class="label-item">有效日期 ${expStr}</div></div>`); } printWindow.document.write('</body></html>'); printWindow.document.close(); setTimeout(() => { printWindow.print(); printWindow.close(); }, 300); }
         }
 
-        function renderSummary(btn) { document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); document.getElementById('sub-nav-bar').style.display = 'none'; const display = document.getElementById('content-display'); const now = new Date().getTime(); let html = `<h2>📊 我的操作總覽</h2>`; const cats = { purchase: '進貨', thaw: '解凍', open: '開封', process: '製備' }; for(let k in cats) { html += `<div style="background:#fff; padding:10px; border-radius:10px; margin-top:15px; font-weight:bold; border-bottom: 2px solid #e2e8f0;">${k==='purchase'?'🚚':k==='thaw'?'❄️':k==='open'?'📦':'🍳'} ${cats[k]}</div><div class="card-container" style="margin-top:10px;">`; for(let g in structure[k]) { (structure[k][g] || []).forEach(item => { const recs = allRecords[currentUserID]?.[item.name], rec = (recs && recs.length > 0) ? recs.sort((a,b)=>a.start-b.start)[recs.length-1] : null; let cls = "food-item-card" + (rec ? " active-card" : ""); let timeLabel = rec ? fmt(rec.expire) : "--/-- --:--"; if (rec) { if (rec.expire === 0 || rec.status === 'scrapped') { cls += " scrapped-card"; timeLabel = "品項已報廢"; } else if (rec.expire <= now) { cls += " expired-card"; } else if (rec.expire - now <= 86400000) { cls += " warning-card"; } } html += `<div class="${cls}" onclick="openDetail('${item.name}','${currentUserID}')"><div class="food-name">${item.name}</div><div class="time-label">止：${timeLabel}</div><div class="card-ops" onclick="event.stopPropagation()">${rec ? `<button class="mini-op-btn btn-undo" onclick="undo('${item.name}')">復</button><button class="mini-op-btn btn-del" onclick="delRec('${item.name}')">清</button>` : ""}</div></div>`; }); } html += `</div>`; } display.innerHTML = html; }
+        function renderSummary(btn) { 
+            document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active')); 
+            btn.classList.add('active'); 
+            document.getElementById('sub-nav-bar').style.display = 'none'; 
+            const display = document.getElementById('content-display'); 
+            const now = new Date().getTime(); 
+            let html = `<h2>📊 我的操作總覽</h2>`; 
+            const cats = { purchase: '進貨', thaw: '解凍', open: '開封', process: '製備' }; 
+            for(let k in cats) { 
+                html += `<div style="background:#fff; padding:10px; border-radius:10px; margin-top:15px; font-weight:bold; border-bottom: 2px solid #e2e8f0;">${k==='purchase'?'🚚':k==='thaw'?'❄️':k==='open'?'📦':'🍳'} ${cats[k]}</div><div class="card-container" style="margin-top:10px;">`; 
+                for(let g in structure[k]) { 
+                    (structure[k][g] || []).forEach(item => { 
+                        const recs = allRecords[currentUserID]?.[item.name], 
+                        rec = (recs && recs.length > 0) ? recs.sort((a,b)=>a.start-b.start)[recs.length-1] : null; 
+                        let cls = "food-item-card" + (rec ? " active-card" : ""); 
+                        let timeLabel = rec ? fmt(rec.expire) : "--/-- --:--"; 
+                        if (rec) { 
+                            if (rec.expire === 0 || rec.status === 'scrapped') { 
+                                cls += " scrapped-card"; timeLabel = "品項已報廢"; 
+                            } else if (rec.expire <= now) { 
+                                cls += " expired-card"; 
+                            } else if (rec.expire - now <= 86400000) { 
+                                cls += " warning-card"; 
+                            } 
+                        } 
+                        html += `<div class="${cls}" onclick="openDetail('${item.name}','${currentUserID}')"><div class="food-name">${item.name}</div><div class="time-label">止：${timeLabel}</div><div class="card-ops" onclick="event.stopPropagation()">${rec ? `<button class="mini-op-btn btn-undo" onclick="undo('${item.name}')">復</button><button class="mini-op-btn btn-del" onclick="delRec('${item.name}')">清</button>` : ""}</div></div>`; 
+                    }); 
+                } 
+                html += `</div>`; 
+            } 
+            display.innerHTML = html; 
+        }
         
         function showReport(btn) { document.querySelectorAll('.menu-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); const navBar = document.getElementById('sub-nav-bar'); navBar.style.display = 'flex'; renderReportNav(); renderReportContent(); }
         function renderReportNav() { const navBar = document.getElementById('sub-nav-bar'); navBar.innerHTML = `<button class="sub-tab-btn ${currentReportMode==='usage'?'active':''}" onclick="currentReportMode='usage'; renderReportNav(); renderReportContent();">📈 用量分析</button><button class="sub-tab-btn ${currentReportMode==='stability'?'active':''}" onclick="currentReportMode='stability'; renderReportNav(); renderReportContent();">⚙️ 操作穩定度</button>`; }
